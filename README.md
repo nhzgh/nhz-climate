@@ -25,6 +25,8 @@ location coordinates. The API remains a separately operated service.
 - True cohort-based cumulative precipitation P10/P50/P90 for 7, 30 and 90
   days, plus rolling-365-day monthly comparisons.
 - Separate rain, snowfall and all-phase precipitation entities.
+- The configured local gauge replaces only liquid rain in the all-phase
+  cumulative actual; modelled solid-water equivalent remains included.
 - Configurable facade and roof subentries with oriented GTI, incident power,
   accumulated energy and conservative aggregates.
 - Calendar-day temperature anomaly based on completed local observations, the
