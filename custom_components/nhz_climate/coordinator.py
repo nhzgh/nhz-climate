@@ -34,6 +34,7 @@ from .const import (
 from .local_history import (
     RAIN_VARIABLE,
     TEMPERATURE_VARIABLE,
+    all_phase_precipitation_from_local_rain,
     calendar_day_temperature_anomaly,
     last_completed_hour,
     local_segment,
@@ -163,9 +164,9 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 days=days,
                 baseline=PRIMARY_BASELINE,
                 include_hourly=(
-                days in (7, 30, 90)
+                    days in (7, 30, 90)
                     or (
-                        variable == RAIN_VARIABLE
+                        variable in (RAIN_VARIABLE, "precipitation")
                         and bool(self._local_source_entity(RAIN_VARIABLE))
                     )
                 ),
@@ -216,10 +217,26 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
 
     async def _with_local_rain_actual(
-        self, comparison: dict[str, Any]
+        self,
+        comparison: dict[str, Any],
+        *,
+        modelled_liquid_comparison: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Prefer each valid local rain hour, then ERA5/archived ICON."""
+        """Prefer local liquid rain, preserving modelled solid precipitation.
+
+        For the liquid-only ``rain`` variable the local counter replaces the
+        modelled rain hour directly.  For all-phase ``precipitation`` it
+        replaces only the modelled liquid component; any non-negative
+        difference between modelled total precipitation and modelled rain is
+        retained as solid-water equivalent.  This lets the standard dashboard
+        use the accurate gauge without silently discarding snowfall.
+        """
         result = self._normalize_comparison(comparison) if comparison else comparison
+        liquid_modelled_hours = (
+            modelled_liquid_comparison.get("hourly_modelled_actual", [])
+            if isinstance(modelled_liquid_comparison, dict)
+            else None
+        )
         # This internal-only response is intentionally removed before the
         # coordinator data reaches an entity attribute.
         modelled_hours = result.pop("hourly_modelled_actual", []) if result else []
@@ -265,6 +282,53 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if isinstance(point, dict)
             and self._parse_utc(point.get("interval_start_utc")) is not None
         }
+        liquid_by_start = {
+            self._parse_utc(point.get("interval_start_utc")): point
+            for point in (liquid_modelled_hours or [])
+            if isinstance(point, dict)
+            and self._parse_utc(point.get("interval_start_utc")) is not None
+        }
+
+        def local_replacement(
+            hour: datetime, local_rain: float
+        ) -> tuple[float, dict[str, Any]] | None:
+            """Return liquid-only or all-phase local replacement for one hour."""
+            if liquid_modelled_hours is None:
+                return local_rain, {
+                    "source_class": "local_observation",
+                    "source_entity": self._local_source_entity(RAIN_VARIABLE),
+                    "method": "home_assistant_lts_change",
+                }
+            total_point = modelled_by_start.get(hour, {})
+            liquid_point = liquid_by_start.get(hour, {})
+            combined = all_phase_precipitation_from_local_rain(
+                local_rain,
+                total_point.get("value_mm"),
+                liquid_point.get("value_mm"),
+            )
+            if combined is None:
+                return None
+            total_source = (
+                total_point.get("source")
+                if isinstance(total_point.get("source"), dict)
+                else {}
+            )
+            return combined, {
+                "source_class": "local_observation_with_modelled_solid",
+                "source_entity": self._local_source_entity(RAIN_VARIABLE),
+                "model": total_source.get("model"),
+                "dataset": total_source.get("dataset"),
+                "method": "local_rain_plus_modelled_solid_water_equivalent",
+                "attribution": total_source.get("attribution"),
+            }
+
+        replacement_values: dict[datetime, float] = {}
+        for hour, local_value in hourly_values.items():
+            if hour is None:
+                continue
+            replacement = local_replacement(hour, local_value)
+            if replacement is not None:
+                replacement_values[hour] = replacement[0]
 
         def metric(range_start: datetime, range_end: datetime) -> dict[str, Any]:
             expected_hours = int((range_end - range_start).total_seconds() // 3600)
@@ -273,21 +337,19 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             while hour < range_end:
                 local_value = hourly_values.get(hour)
                 if local_value is not None:
-                    source = {
-                        "source_class": "local_observation",
-                        "source_entity": self._local_source_entity(RAIN_VARIABLE),
-                        "method": "home_assistant_lts_change",
-                    }
-                    selected.append((hour, local_value, source))
-                else:
-                    modelled = modelled_by_start.get(hour, {})
-                    value = modelled.get("value_mm")
-                    try:
-                        model_value = float(value) if value is not None else None
-                    except (TypeError, ValueError):
-                        model_value = None
-                    source = modelled.get("source") if isinstance(modelled.get("source"), dict) else {}
-                    selected.append((hour, model_value, source))
+                    replacement = local_replacement(hour, local_value)
+                    if replacement is not None:
+                        selected.append((hour, replacement[0], replacement[1]))
+                        hour += timedelta(hours=1)
+                        continue
+                modelled = modelled_by_start.get(hour, {})
+                value = modelled.get("value_mm")
+                try:
+                    model_value = float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    model_value = None
+                source = modelled.get("source") if isinstance(modelled.get("source"), dict) else {}
+                selected.append((hour, model_value, source))
                 hour += timedelta(hours=1)
 
             available = [value for _, value, _ in selected if value is not None]
@@ -339,7 +401,14 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result["actual"] = actual
         if result.get("days") in (7, 30, 90):
             result["daily_incremental"] = self._daily_from_hourly(
-                modelled_hours, site_timezone, hourly_values
+                modelled_hours,
+                site_timezone,
+                replacement_values,
+                local_source_class=(
+                    "local_observation_with_modelled_solid"
+                    if liquid_modelled_hours is not None
+                    else "local_observation"
+                ),
             )
         normalized_months = []
         for month in result.get("months") or []:
@@ -361,6 +430,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         modelled_hours: list[dict[str, Any]],
         site_timezone: str,
         local_values: dict[datetime | None, float] | None = None,
+        local_source_class: str = "local_observation",
     ) -> list[dict[str, Any]]:
         """Compact a resolved hourly series into local daily points.
 
@@ -377,7 +447,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if start is None:
                 continue
             if local_values is not None and start in local_values:
-                value, source_class = local_values[start], "local_observation"
+                value, source_class = local_values[start], local_source_class
             else:
                 raw = point.get("value_mm")
                 try:
@@ -755,6 +825,17 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 *(self._with_local_rain_actual(item)
                   for item in by_variable[RAIN_VARIABLE])
             )
+            precipitation_comparisons = await asyncio.gather(
+                *(
+                    self._with_local_rain_actual(
+                        comparison,
+                        modelled_liquid_comparison=liquid_comparison,
+                    )
+                    for comparison, liquid_comparison in zip(
+                        by_variable["precipitation"], by_variable[RAIN_VARIABLE]
+                    )
+                )
+            )
             latest["monthly_comparisons"] = {
                 RAIN_VARIABLE: {
                     f"{days}d": self._attach_daily_reference(
@@ -765,11 +846,11 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 },
                 "precipitation": {
                     f"{days}d": self._attach_daily_reference(
-                        self._with_modelled_daily(comparison), daily_profiles,
+                        comparison, daily_profiles,
                         "precipitation", profiles,
                     )
                     for days, comparison in zip(
-                        MONTHLY_COMPARISON_WINDOWS, by_variable["precipitation"]
+                        MONTHLY_COMPARISON_WINDOWS, precipitation_comparisons
                     )
                     if comparison
                 },

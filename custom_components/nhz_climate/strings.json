@@ -24,11 +24,17 @@
         }
       },
       "options": {
-        "title": "Local observation sources",
-        "description": "Optional Home Assistant long-term-statistics sources. Rain only replaces liquid rain, never all-phase precipitation.",
+        "title": "Local observations and outdoor sources",
+        "description": "Configure local long-term-statistics sources and the shared outdoor and safety sensors used by all ventilation zones.",
         "data": {
           "rain_source_entity": "Local rain counter (optional, mm total_increasing)",
-          "temperature_source_entity": "Local outdoor temperature (optional, °C measurement)"
+          "temperature_source_entity": "Local outdoor temperature (optional, °C measurement)",
+          "outdoor_temperature_entity": "Outdoor air temperature for ventilation (optional, °C measurement)",
+          "outdoor_humidity_entity": "Outdoor relative humidity for ventilation (optional, % measurement)",
+          "pressure_entity": "Air pressure for ventilation (optional, Pa/hPa measurement)",
+          "rain_rate_entity": "Rain rate safety source (optional, mm/h measurement)",
+          "rain_counter_entity": "Rain counter safety source (optional, mm total_increasing)",
+          "wind_gust_entity": "Wind gust safety source (optional, km/h or m/s measurement)"
         }
       },
       "reconfigure": {
@@ -112,7 +118,7 @@
         }
       },
       "error": {
-        "outside_sources_missing": "Configure outdoor temperature, humidity, and pressure on the parent NHZ Climate entry first.",
+        "outside_sources_missing": "First configure outdoor temperature, humidity, pressure, rain rate, and wind gusts under Configure on the parent NHZ Climate entry.",
         "zone_id_exists": "This stable zone ID is already in use.",
         "invalid_slug": "Use only lowercase letters, numbers, and underscores.",
         "source_not_found": "The selected entity was not found.",

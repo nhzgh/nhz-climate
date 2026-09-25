@@ -624,7 +624,7 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class NhzClimateOptionsFlow(OptionsFlow):
-    """Choose optional local recorder sources without changing API credentials."""
+    """Choose local observation and shared ventilation sources."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -642,6 +642,7 @@ class NhzClimateOptionsFlow(OptionsFlow):
             ):
                 if error := _source_error(self.hass, entity_id, variable):
                     errors[key] = error
+            errors.update(_validate_ventilation_sources(self.hass, data))
             if not errors:
                 return self.async_create_entry(title="", data=data)
 
@@ -649,7 +650,12 @@ class NhzClimateOptionsFlow(OptionsFlow):
         defaults.update(self.config_entry.options)
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(_source_schema(defaults)),
+            data_schema=vol.Schema({
+                **_source_schema(defaults),
+                **_ventilation_source_schema(
+                    defaults, include_provider_interval=False
+                ),
+            }),
             errors=errors,
         )
 
@@ -660,7 +666,7 @@ class NhzClimateVentilationZoneSubentryFlow(ConfigSubentryFlow):
     def _required_outdoor_sources_missing(self, entry: ConfigEntry) -> bool:
         """A zone needs a physical indoor/outdoor air-state comparison."""
         return any(
-            not str(entry.data.get(field, "")).strip()
+            not str(entry.options.get(field, entry.data.get(field, ""))).strip()
             for field in (
                 CONF_OUTDOOR_TEMPERATURE_ENTITY,
                 CONF_OUTDOOR_HUMIDITY_ENTITY,

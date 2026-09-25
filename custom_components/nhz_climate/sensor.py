@@ -121,6 +121,8 @@ def _source_label(actual: dict[str, Any]) -> str | None:
     source_class = actual.get("source_class")
     if source_class == "local_observation":
         return "Lokal"
+    if source_class == "local_observation_with_modelled_solid":
+        return "Lokal + Modellschnee"
     if source_class == "reanalysis":
         return "ERA5"
     if source_class == "forecast_archive":
@@ -700,7 +702,7 @@ class NhzClimateMonthlyComparisonSensor(
             "monthly_comparisons": compact_monthly_comparisons(self.comparisons),
             "source_entity": (
                 self.coordinator._local_source_entity("rain") or None
-                if self.variable == "rain" else None
+                if self.variable in {"rain", "precipitation"} else None
             ),
         }
 

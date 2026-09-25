@@ -63,6 +63,26 @@ def _number(value: Any) -> float | None:
     return number if isfinite(number) else None
 
 
+def all_phase_precipitation_from_local_rain(
+    local_rain_mm: Any,
+    modelled_precipitation_mm: Any,
+    modelled_rain_mm: Any,
+) -> float | None:
+    """Combine gauge rain with the modelled non-liquid component.
+
+    Open-Meteo's ``precipitation`` is all-phase water equivalent while
+    ``rain`` is liquid-only. Replacing the former with a rain gauge would lose
+    snow; adding both full model values would double-count rain. Keep only the
+    non-negative modelled difference and add it to the gauge value.
+    """
+    local = _number(local_rain_mm)
+    total = _number(modelled_precipitation_mm)
+    liquid = _number(modelled_rain_mm)
+    if local is None or total is None or liquid is None or local < 0:
+        return None
+    return local + max(total - liquid, 0.0)
+
+
 def normalize_hourly_statistics(
     statistics: Iterable[dict[str, Any]],
     start_utc: datetime,

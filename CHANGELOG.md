@@ -2,6 +2,14 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.9.1 - 2026-09-25
+
+- Expose shared outdoor and ventilation safety sources in Home Assistant's
+  normal Configure dialog and honor option values when editing room zones.
+- Feed the local rain gauge into all-phase cumulative precipitation while
+  retaining the modelled solid-water equivalent.
+- Add the HACS brand asset and repository validation metadata.
+
 ## 0.9.0 - 2026-09-25
 
 - Prepare the integration for installation as a custom HACS repository.

@@ -23,11 +23,17 @@
         }
       },
       "options": {
-        "title": "Lokale IST-Quellen",
-        "description": "Optionale Home-Assistant-Langzeitstatistiken. Regen ersetzt nur flüssigen Regen, nie Gesamtniederschlag einschließlich Schnee.",
+        "title": "Lokale IST- und Außenquellen",
+        "description": "Konfiguriert lokale Langzeitstatistiken sowie die gemeinsamen Außen- und Sicherheitssensoren aller Lüftungszonen.",
         "data": {
           "rain_source_entity": "Lokaler Regenzähler (optional, mm total_increasing)",
-          "temperature_source_entity": "Lokale Außentemperatur (optional, °C measurement)"
+          "temperature_source_entity": "Lokale Außentemperatur (optional, °C measurement)",
+          "outdoor_temperature_entity": "Außenlufttemperatur für Lüften (optional, °C measurement)",
+          "outdoor_humidity_entity": "Außenluftfeuchte für Lüften (optional, % measurement)",
+          "pressure_entity": "Luftdruck für Lüften (optional, Pa/hPa measurement)",
+          "rain_rate_entity": "Regenrate als Sicherheitssignal (optional, mm/h measurement)",
+          "rain_counter_entity": "Regenzähler als Sicherheitssignal (optional, mm total_increasing)",
+          "wind_gust_entity": "Windböen als Sicherheitssignal (optional, km/h oder m/s measurement)"
         }
       },
       "reconfigure": {
@@ -111,7 +117,7 @@
         }
       },
       "error": {
-        "outside_sources_missing": "Konfiguriere zuerst Außenlufttemperatur, Außenluftfeuchte und Luftdruck im übergeordneten NHZ-Climate-Eintrag.",
+        "outside_sources_missing": "Konfiguriere zuerst Außenlufttemperatur, Außenluftfeuchte, Luftdruck, Regenrate und Windböen unter „Konfigurieren“ im übergeordneten NHZ-Climate-Eintrag.",
         "zone_id_exists": "Diese stabile Zonen-ID wird bereits verwendet.",
         "invalid_slug": "Nur Kleinbuchstaben, Ziffern und Unterstriche verwenden.",
         "source_not_found": "Die gewählte Entity wurde nicht gefunden.",
