@@ -1,0 +1,173 @@
+{
+  "title": "NHZ Climate",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to NHZ Climate",
+        "description": "Connect to the read-only climate reference API.",
+        "data": {
+          "base_url": "API URL",
+          "token": "API token",
+          "site": "Site",
+          "dataset": "Dataset",
+          "forecast_entity": "Weather forecast entity",
+          "variables": "Variables (comma-separated)",
+          "rain_source_entity": "Local rain counter (optional, mm total_increasing)",
+          "temperature_source_entity": "Local outdoor temperature (optional, °C measurement)",
+          "outdoor_temperature_entity": "Outdoor air temperature for ventilation (optional, °C measurement)",
+          "outdoor_humidity_entity": "Outdoor relative humidity for ventilation (optional, % measurement)",
+          "pressure_entity": "Air pressure for ventilation (optional, Pa/hPa measurement)",
+          "rain_rate_entity": "Rain rate safety source (optional, mm/h measurement)",
+          "rain_counter_entity": "Rain counter (optional, mm total_increasing)",
+          "wind_gust_entity": "Wind gust safety source (optional, km/h or m/s measurement)",
+          "provider_update_minutes": "Provider refresh interval (minutes)"
+        }
+      },
+      "options": {
+        "title": "Local observation sources",
+        "description": "Optional Home Assistant long-term-statistics sources. Rain only replaces liquid rain, never all-phase precipitation.",
+        "data": {
+          "rain_source_entity": "Local rain counter (optional, mm total_increasing)",
+          "temperature_source_entity": "Local outdoor temperature (optional, °C measurement)"
+        }
+      },
+      "reconfigure": {
+        "title": "Ventilation outdoor sources",
+        "description": "Configure the shared outdoor source pair and safety inputs used by all ventilation zones.",
+        "data": {
+          "outdoor_temperature_entity": "Outdoor air temperature for ventilation (optional, °C measurement)",
+          "outdoor_humidity_entity": "Outdoor relative humidity for ventilation (optional, % measurement)",
+          "pressure_entity": "Air pressure for ventilation (optional, Pa/hPa measurement)",
+          "rain_rate_entity": "Rain rate safety source (optional, mm/h measurement)",
+          "rain_counter_entity": "Rain counter (optional, mm total_increasing)",
+          "wind_gust_entity": "Wind gust safety source (optional, km/h or m/s measurement)",
+          "provider_update_minutes": "Provider refresh interval (minutes)"
+        }
+      },
+      "sl_ventilation_zones": {
+        "title": "SL ventilation pilot rooms",
+        "description": "Review the three proposed zones before they are created: Nanils (`sensor.sz_climatecontrol_room_temperature` / `sensor.sz_climatecontrol_room_humidity`), Nino (`sensor.nino_climatecontrol_room_temperature` / `sensor.nino_climatecontrol_room_humidity`), and Küche (`sensor.kuche_climatecontrol_room_temperature` / `sensor.kuche_climatecontrol_room_humidity`). No rooms are created if you turn this off.",
+        "data": {
+          "create_sl_ventilation_zones": "Create these three explicitly reviewed pilot zones"
+        }
+      },
+      "sl_surfaces": {
+        "title": "SL facades and roofs",
+        "description": "Review the six plan-derived, unshaded reference planes before they are created: North 80.39 m² / 90° / −175° (no vendor GTI is available yet), East 69.38 m² / 90° / −95°, South 80.39 m² / 90° / −5°, West 69.38 m² / 90° / +85°, East roof 61 m² / 15° / −95°, West roof 94 m² / 17° / +85°. Window and other-opening areas are stored separately. These values describe incident radiation only; they do not claim a heating or cooling load.",
+        "data": {
+          "create_sl_surfaces": "Create these six explicitly reviewed surface subentries"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the API",
+      "invalid_auth": "Invalid API token",
+      "unknown_site": "The site is not available from the API",
+      "source_not_found": "The local source entity was not found",
+      "rain_source_unit": "The rain source must use mm",
+      "rain_source_state_class": "The rain source must use state_class total_increasing",
+      "temperature_source_unit": "The temperature source must use °C",
+      "temperature_source_state_class": "The temperature source must use state_class measurement",
+      "rain_counter_source_unit": "The rain counter must use mm",
+      "rain_counter_source_state_class": "The rain counter must use state_class total_increasing",
+      "humidity_source_unit": "The humidity source must use %",
+      "humidity_source_state_class": "The humidity source must use state_class measurement",
+      "pressure_source_unit": "The pressure source must use Pa, hPa, or mbar",
+      "pressure_source_state_class": "The pressure source must use state_class measurement",
+      "rain_rate_source_unit": "The rain-rate source must use mm/h",
+      "rain_rate_source_state_class": "The rain-rate source must use state_class measurement",
+      "wind_gust_source_unit": "The gust source must use km/h or m/s",
+      "wind_gust_source_state_class": "The gust source must use state_class measurement",
+      "outside_sources_missing": "Configure outdoor temperature, humidity, and pressure before creating ventilation zones."
+    },
+    "abort": {
+      "already_configured": "This site and dataset are already configured",
+      "cannot_connect": "Cannot connect to the API",
+      "invalid_auth": "Invalid API token",
+      "unknown_site": "The site is not available from the API"
+    }
+  },
+  "config_subentries": {
+    "ventilation_zone": {
+      "title": "Ventilation zone",
+      "step": {
+        "user": {
+          "title": "Add ventilation zone",
+          "description": "Choose the indoor temperature and humidity sensors for one room. The zone ID is permanent so recorder statistics remain attributable.",
+          "data": {
+            "zone_id": "Stable zone ID",
+            "name": "Room name",
+            "indoor_temperature_entity": "Indoor temperature entity",
+            "indoor_humidity_entity": "Indoor relative-humidity entity"
+          }
+        },
+        "reconfigure": {
+          "title": "Update ventilation zone",
+          "description": "The stable zone ID cannot be changed.",
+          "data": {
+            "name": "Room name",
+            "indoor_temperature_entity": "Indoor temperature entity",
+            "indoor_humidity_entity": "Indoor relative-humidity entity"
+          }
+        }
+      },
+      "error": {
+        "outside_sources_missing": "Configure outdoor temperature, humidity, and pressure on the parent NHZ Climate entry first.",
+        "zone_id_exists": "This stable zone ID is already in use.",
+        "invalid_slug": "Use only lowercase letters, numbers, and underscores.",
+        "source_not_found": "The selected entity was not found.",
+        "temperature_source_unit": "The temperature source must use °C.",
+        "temperature_source_state_class": "The temperature source must use state_class measurement.",
+        "humidity_source_unit": "The humidity source must use %.",
+        "humidity_source_state_class": "The humidity source must use state_class measurement."
+      }
+    },
+    "surface": {
+      "title": "Facade or roof surface",
+      "step": {
+        "user": {
+          "title": "Add surface identity",
+          "description": "The stable surface ID cannot be changed after creation. Select the physical plane type first.",
+          "data": {
+            "surface_id": "Stable surface ID",
+            "surface_type": "Surface type"
+          }
+        },
+        "details": {
+          "title": "Configure surface geometry and source",
+          "description": "Choose the vendor GTI source if one exists. Without it, incident-solar values stay unavailable instead of being shown as zero. All first-stage values are unshaded incident radiation, not building heating or cooling load.",
+          "data": {
+            "name": "Surface name",
+            "tilt_deg": "Tilt (degrees)",
+            "azimuth_deg": "Azimuth (degrees; Open-Meteo: 0° south, negative east)",
+            "gross_area_m2": "Gross plane area (m²)",
+            "window_area_m2": "Window/glass area contained in plane (m²)",
+            "other_opening_area_m2": "Other opening area contained in plane (m²)",
+            "gti_entity": "Vendor GTI source (optional, W/m² measurement)"
+          }
+        },
+        "reconfigure": {
+          "title": "Update surface",
+          "description": "The stable ID and surface type cannot be changed. Geometry and the optional GTI source can.",
+          "data": {
+            "name": "Surface name",
+            "tilt_deg": "Tilt (degrees)",
+            "azimuth_deg": "Azimuth (degrees; Open-Meteo: 0° south, negative east)",
+            "gross_area_m2": "Gross plane area (m²)",
+            "window_area_m2": "Window/glass area contained in plane (m²)",
+            "other_opening_area_m2": "Other opening area contained in plane (m²)",
+            "gti_entity": "Vendor GTI source (optional, W/m² measurement)"
+          }
+        }
+      },
+      "error": {
+        "surface_id_exists": "This stable surface ID is already in use.",
+        "invalid_surface_id": "Use 1–64 lower-case letters, numbers, hyphens, or underscores; start with a letter or number.",
+        "invalid_surface": "The surface geometry or area partition is physically inconsistent.",
+        "source_not_found": "The selected GTI source entity was not found.",
+        "irradiance_source_unit": "The GTI source must use W/m².",
+        "irradiance_source_state_class": "The GTI source must use state_class measurement."
+      }
+    }
+  }
+}

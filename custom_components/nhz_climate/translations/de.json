@@ -1,0 +1,172 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mit NHZ Climate verbinden",
+        "description": "Verbindung mit der schreibgeschützten Klimareferenz-API.",
+        "data": {
+          "base_url": "API-URL",
+          "token": "API-Token",
+          "site": "Standort",
+          "dataset": "Datensatz",
+          "forecast_entity": "Wettervorhersage-Entity",
+          "variables": "Variablen (kommagetrennt)",
+          "rain_source_entity": "Lokaler Regenzähler (optional, mm total_increasing)",
+          "temperature_source_entity": "Lokale Außentemperatur (optional, °C measurement)",
+          "outdoor_temperature_entity": "Außenlufttemperatur für Lüften (optional, °C measurement)",
+          "outdoor_humidity_entity": "Außenluftfeuchte für Lüften (optional, % measurement)",
+          "pressure_entity": "Luftdruck für Lüften (optional, Pa/hPa measurement)",
+          "rain_rate_entity": "Regenrate als Sicherheitssignal (optional, mm/h measurement)",
+          "rain_counter_entity": "Regenzähler (optional, mm total_increasing)",
+          "wind_gust_entity": "Windböen als Sicherheitssignal (optional, km/h oder m/s measurement)",
+          "provider_update_minutes": "Aktualisierungsintervall des Providers (Minuten)"
+        }
+      },
+      "options": {
+        "title": "Lokale IST-Quellen",
+        "description": "Optionale Home-Assistant-Langzeitstatistiken. Regen ersetzt nur flüssigen Regen, nie Gesamtniederschlag einschließlich Schnee.",
+        "data": {
+          "rain_source_entity": "Lokaler Regenzähler (optional, mm total_increasing)",
+          "temperature_source_entity": "Lokale Außentemperatur (optional, °C measurement)"
+        }
+      },
+      "reconfigure": {
+        "title": "Gemeinsame Außenquellen für Lüften",
+        "description": "Konfiguriert das gemeinsame Außenluftpaar und die Sicherheitsquellen für alle Lüftungszonen.",
+        "data": {
+          "outdoor_temperature_entity": "Außenlufttemperatur für Lüften (optional, °C measurement)",
+          "outdoor_humidity_entity": "Außenluftfeuchte für Lüften (optional, % measurement)",
+          "pressure_entity": "Luftdruck für Lüften (optional, Pa/hPa measurement)",
+          "rain_rate_entity": "Regenrate als Sicherheitssignal (optional, mm/h measurement)",
+          "rain_counter_entity": "Regenzähler (optional, mm total_increasing)",
+          "wind_gust_entity": "Windböen als Sicherheitssignal (optional, km/h oder m/s measurement)",
+          "provider_update_minutes": "Aktualisierungsintervall des Providers (Minuten)"
+        }
+      },
+      "sl_ventilation_zones": {
+        "title": "SL-Piloträume für Lüften",
+        "description": "Prüfe die drei vorgeschlagenen Zonen, bevor sie angelegt werden: Nanils (`sensor.sz_climatecontrol_room_temperature` / `sensor.sz_climatecontrol_room_humidity`), Nino (`sensor.nino_climatecontrol_room_temperature` / `sensor.nino_climatecontrol_room_humidity`) und Küche (`sensor.kuche_climatecontrol_room_temperature` / `sensor.kuche_climatecontrol_room_humidity`). Wenn du dies ausschaltest, werden keine Räume angelegt.",
+        "data": {
+          "create_sl_ventilation_zones": "Diese drei ausdrücklich geprüften Pilotzonen anlegen"
+        }
+      },
+      "sl_surfaces": {
+        "title": "SL-Fassaden und Dächer",
+        "description": "Prüfe die sechs aus Plänen abgeleiteten, unverschatteten Referenzflächen vor dem Anlegen: Nord 80,39 m² / 90° / −175° (noch ohne Vendor-GTI), Ost 69,38 m² / 90° / −95°, Süd 80,39 m² / 90° / −5°, West 69,38 m² / 90° / +85°, Dach Ost 61 m² / 15° / −95°, Dach West 94 m² / 17° / +85°. Fenster und andere Öffnungen werden getrennt gespeichert. Die Werte sind nur auftreffende Einstrahlung, keine Heiz- oder Kühllast.",
+        "data": {
+          "create_sl_surfaces": "Diese sechs ausdrücklich geprüften Flächen-Subentries anlegen"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zur API nicht möglich",
+      "invalid_auth": "Ungültiger API-Token",
+      "unknown_site": "Der Standort ist über die API nicht verfügbar",
+      "source_not_found": "Die lokale Quellen-Entity wurde nicht gefunden",
+      "rain_source_unit": "Die Regenquelle muss mm verwenden",
+      "rain_source_state_class": "Die Regenquelle muss state_class total_increasing verwenden",
+      "temperature_source_unit": "Die Temperaturquelle muss °C verwenden",
+      "temperature_source_state_class": "Die Temperaturquelle muss state_class measurement verwenden",
+      "rain_counter_source_unit": "Der Regenzähler muss mm verwenden",
+      "rain_counter_source_state_class": "Der Regenzähler muss state_class total_increasing verwenden",
+      "humidity_source_unit": "Die Feuchtequelle muss % verwenden",
+      "humidity_source_state_class": "Die Feuchtequelle muss state_class measurement verwenden",
+      "pressure_source_unit": "Die Druckquelle muss Pa, hPa oder mbar verwenden",
+      "pressure_source_state_class": "Die Druckquelle muss state_class measurement verwenden",
+      "rain_rate_source_unit": "Die Regenrate muss mm/h verwenden",
+      "rain_rate_source_state_class": "Die Regenrate muss state_class measurement verwenden",
+      "wind_gust_source_unit": "Die Böenquelle muss km/h oder m/s verwenden",
+      "wind_gust_source_state_class": "Die Böenquelle muss state_class measurement verwenden",
+      "outside_sources_missing": "Konfiguriere Außenlufttemperatur, Außenluftfeuchte und Luftdruck, bevor Lüftungszonen angelegt werden."
+    },
+    "abort": {
+      "already_configured": "Dieser Standort und Datensatz sind bereits eingerichtet",
+      "cannot_connect": "Verbindung zur API nicht möglich",
+      "invalid_auth": "Ungültiger API-Token",
+      "unknown_site": "Der Standort ist über die API nicht verfügbar"
+    }
+  },
+  "config_subentries": {
+    "ventilation_zone": {
+      "title": "Lüftungszone",
+      "step": {
+        "user": {
+          "title": "Lüftungszone hinzufügen",
+          "description": "Wähle Temperatur- und Feuchtesensor für einen Raum. Die Zonen-ID bleibt dauerhaft stabil, damit Recorder-Statistiken zugeordnet bleiben.",
+          "data": {
+            "zone_id": "Stabile Zonen-ID",
+            "name": "Raumname",
+            "indoor_temperature_entity": "Entity der Innentemperatur",
+            "indoor_humidity_entity": "Entity der relativen Innenluftfeuchte"
+          }
+        },
+        "reconfigure": {
+          "title": "Lüftungszone ändern",
+          "description": "Die stabile Zonen-ID kann nicht geändert werden.",
+          "data": {
+            "name": "Raumname",
+            "indoor_temperature_entity": "Entity der Innentemperatur",
+            "indoor_humidity_entity": "Entity der relativen Innenluftfeuchte"
+          }
+        }
+      },
+      "error": {
+        "outside_sources_missing": "Konfiguriere zuerst Außenlufttemperatur, Außenluftfeuchte und Luftdruck im übergeordneten NHZ-Climate-Eintrag.",
+        "zone_id_exists": "Diese stabile Zonen-ID wird bereits verwendet.",
+        "invalid_slug": "Nur Kleinbuchstaben, Ziffern und Unterstriche verwenden.",
+        "source_not_found": "Die gewählte Entity wurde nicht gefunden.",
+        "temperature_source_unit": "Die Temperaturquelle muss °C verwenden.",
+        "temperature_source_state_class": "Die Temperaturquelle muss state_class measurement verwenden.",
+        "humidity_source_unit": "Die Feuchtequelle muss % verwenden.",
+        "humidity_source_state_class": "Die Feuchtequelle muss state_class measurement verwenden."
+      }
+    },
+    "surface": {
+      "title": "Fassaden- oder Dachfläche",
+      "step": {
+        "user": {
+          "title": "Flächenidentität hinzufügen",
+          "description": "Die stabile Flächen-ID kann nach dem Anlegen nicht geändert werden. Zuerst den Typ der physischen Fläche wählen.",
+          "data": {
+            "surface_id": "Stabile Flächen-ID",
+            "surface_type": "Flächentyp"
+          }
+        },
+        "details": {
+          "title": "Flächengeometrie und Quelle konfigurieren",
+          "description": "Falls vorhanden, Vendor-GTI-Quelle wählen. Ohne Quelle bleiben die Einstrahlungswerte unavailable statt fälschlich 0 zu zeigen. Alle Werte der ersten Stufe sind unverschattete auftreffende Einstrahlung, keine Gebäude-Heiz- oder Kühllast.",
+          "data": {
+            "name": "Flächenname",
+            "tilt_deg": "Neigung (Grad)",
+            "azimuth_deg": "Azimut (Grad; Open-Meteo: 0° Süd, negativ Ost)",
+            "gross_area_m2": "Bruttoebenenfläche (m²)",
+            "window_area_m2": "Enthaltene Fenster-/Glasfläche (m²)",
+            "other_opening_area_m2": "Enthaltene sonstige Öffnungsfläche (m²)",
+            "gti_entity": "Vendor-GTI-Quelle (optional, W/m² measurement)"
+          }
+        },
+        "reconfigure": {
+          "title": "Fläche ändern",
+          "description": "Stabile ID und Flächentyp können nicht geändert werden. Geometrie und optionale GTI-Quelle sind änderbar.",
+          "data": {
+            "name": "Flächenname",
+            "tilt_deg": "Neigung (Grad)",
+            "azimuth_deg": "Azimut (Grad; Open-Meteo: 0° Süd, negativ Ost)",
+            "gross_area_m2": "Bruttoebenenfläche (m²)",
+            "window_area_m2": "Enthaltene Fenster-/Glasfläche (m²)",
+            "other_opening_area_m2": "Enthaltene sonstige Öffnungsfläche (m²)",
+            "gti_entity": "Vendor-GTI-Quelle (optional, W/m² measurement)"
+          }
+        }
+      },
+      "error": {
+        "surface_id_exists": "Diese stabile Flächen-ID wird bereits verwendet.",
+        "invalid_surface_id": "1–64 Kleinbuchstaben, Ziffern, Bindestriche oder Unterstriche verwenden; Beginn mit Buchstabe oder Ziffer.",
+        "invalid_surface": "Flächengeometrie oder Flächenaufteilung ist physikalisch nicht stimmig.",
+        "source_not_found": "Die gewählte GTI-Quellen-Entity wurde nicht gefunden.",
+        "irradiance_source_unit": "Die GTI-Quelle muss W/m² verwenden.",
+        "irradiance_source_state_class": "Die GTI-Quelle muss state_class measurement verwenden."
+      }
+    }
+  }
+}
