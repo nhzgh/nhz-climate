@@ -1,0 +1,85 @@
+name: Publish HACS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version from manifest.json, for example 0.9.1"
+        required: true
+        type: string
+      commit_sha:
+        description: "Full 40-character commit SHA approved for release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hacs-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Verify requested integration version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          APPROVED_COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          requested = os.environ["REQUESTED_VERSION"].removeprefix("v")
+          approved_sha = os.environ["APPROVED_COMMIT_SHA"]
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", requested):
+              raise SystemExit(f"Invalid semantic version: {requested}")
+          if not re.fullmatch(r"[0-9a-f]{40}", approved_sha):
+              raise SystemExit("commit_sha must be a full lowercase commit SHA")
+          manifest = json.loads(
+              Path("custom_components/nhz_climate/manifest.json").read_text()
+          )
+          if manifest.get("version") != requested:
+              raise SystemExit(
+                  f"manifest version {manifest.get('version')!r} != requested {requested!r}"
+              )
+          PY
+          test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT_SHA"
+
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+
+      - name: Create and verify published GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          APPROVED_COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          version="${REQUESTED_VERSION#v}"
+          tag="v${version}"
+          if git ls-remote --exit-code origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${tag}" --jq .sha)"
+            test "$tag_sha" = "$APPROVED_COMMIT_SHA"
+          else
+            git tag "$tag" "$APPROVED_COMMIT_SHA"
+            git push origin "refs/tags/${tag}"
+          fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --verify-tag --title "$tag" --generate-notes
+          fi
+          release_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${tag}" --jq .sha)"
+          test "$release_sha" = "$APPROVED_COMMIT_SHA"
+          gh release view "$tag" \
+            --json tagName,isDraft,isPrerelease,publishedAt \
+            --jq 'select(.tagName == "'"$tag"'" and (.isDraft | not) and (.isPrerelease | not) and .publishedAt != null)'

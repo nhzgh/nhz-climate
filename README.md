@@ -19,6 +19,16 @@ repository. It is not submitted to the default HACS catalog.
 The integration does not contain API credentials, host-specific secrets or
 location coordinates. The API remains a separately operated service.
 
+## Release and deployment rule
+
+Home Assistant sites install and update this integration only from a published
+GitHub release through HACS. A commit on `main` is not deployable. Maintainers
+publish a version with the **Publish HACS release** GitHub Actions workflow;
+the workflow requires the requested semantic version to match `manifest.json`,
+runs HACS validation, creates the GitHub release and verifies that it is
+published on the exact workflow commit. Site rollout starts only after HACS
+reports that release as its latest version.
+
 ## 0.9 feature scope
 
 - ERA5 climate profiles for 1970–2025 and the full available history.
