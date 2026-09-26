@@ -26,7 +26,7 @@ GitHub release through HACS. A commit on `main` is not deployable. Maintainers
 publish a version with the **Publish HACS release** GitHub Actions workflow;
 the workflow requires the requested semantic version to match `manifest.json`,
 runs HACS validation, creates the GitHub release and verifies that it is
-published on the exact workflow commit. Site rollout starts only after HACS
+published on the exact approved commit supplied to the workflow. Site rollout starts only after HACS
 reports that release as its latest version.
 
 ## 0.9 feature scope
