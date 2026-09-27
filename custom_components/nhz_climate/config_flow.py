@@ -675,7 +675,11 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_WIND_GUST_ENTITY,
                     )
                 }
-                return self.async_update_reload_and_abort(entry, data_updates=updates)
+                # The entry update listener reloads the active integration.
+                # An explicit flow-driven reload as well would schedule a
+                # second reload and is prohibited for subentries when an
+                # update listener exists.
+                return self.async_update_and_abort(entry, data_updates=updates)
 
         defaults = dict(entry.data)
         defaults.update(entry.options)
@@ -797,7 +801,7 @@ class NhzClimateVentilationZoneSubentryFlow(ConfigSubentryFlow):
             data = _zone_data(user_input, zone_id=subentry.data[CONF_ZONE_ID])
             errors = _validate_zone_sources(self.hass, data)
             if not errors:
-                return self.async_update_reload_and_abort(
+                return self.async_update_and_abort(
                     entry,
                     subentry,
                     title=data[CONF_NAME],
@@ -923,7 +927,7 @@ class NhzClimateSurfaceSubentryFlow(ConfigSubentryFlow):
             )
             errors = _validate_surface(self.hass, data)
             if not errors:
-                return self.async_update_reload_and_abort(
+                return self.async_update_and_abort(
                     entry, subentry, title=data[CONF_NAME], data=data
                 )
             defaults.update(data)

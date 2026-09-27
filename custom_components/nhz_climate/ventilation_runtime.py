@@ -8,14 +8,14 @@ tested without a running HA instance.
 It is intentionally conservative: a model value can supply a psychrometric
 comparison, but it can never prove that the local rain/gust safety sources are
 safe.  In particular, the commonly unchanged GW1100A ``0 mm/h`` rain state is
-accepted only while the shared outdoor temperature *and* humidity sources are
-fresh and mutually time-aligned.
+accepted only while the shared outdoor temperature *and* humidity sources
+remain available and valid local observations.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from math import isfinite
 from typing import Any, Literal
 
@@ -54,10 +54,10 @@ CANONICAL_UNITS: dict[Quantity, str] = {
 class EntityStateInput:
     """The small, HA-state-shaped contract accepted by this module.
 
-    ``last_updated`` should be HA's timestamp at which the source was last
-    supplied.  It must be timezone-aware; naive values are deliberately not
-    interpreted in the host timezone.  ``source_class`` is the existing S01
-    provenance value and controls the 30/120-minute freshness policy.
+    ``last_updated`` is kept for source provenance.  Home Assistant updates it
+    only when a state changes, so it is not an age limit for local sensor
+    states.  Model fallback values do use it as a provider-timestep timestamp
+    and must be timezone-aware.
     """
 
     entity_id: str
@@ -294,7 +294,14 @@ def normalize_entity_state(
         else:
             canonical_value = candidate
     observed_at = _utc(raw.last_updated)
-    if raw.last_updated is not None and observed_at is None:
+    # A malformed/missing local timestamp does not make an otherwise
+    # available HA state stale.  Model fallback values do depend on their
+    # exact provider timestep and are rejected without one.
+    if (
+        raw.source_class == MODEL_FALLBACK
+        and raw.last_updated is not None
+        and observed_at is None
+    ):
         errors.append(f"{name}_invalid_timestamp")
     provenance = SourceProvenance(
         entity_id=raw.entity_id,
@@ -325,15 +332,21 @@ def source_freshness(
     now: datetime,
     policy: FreshnessPolicy = FreshnessPolicy(),
 ) -> SourceFreshness:
-    """Evaluate source freshness with the common S01 local/model limits."""
+    """Evaluate source usability from provenance and model-timestep policy.
+
+    A local state that remains available is usable irrespective of the age of
+    its last state change.  Only fallback-model timestamps are interpreted as
+    reporting timesteps and are therefore subject to timestamp/age checks.
+    """
     current = _utc(now)
     if current is None:
         raise ValueError("now must be timezone-aware")
     observed_at = _utc(raw.last_updated)
     errors: list[str] = []
     if raw.source_class == LOCAL_OBSERVATION:
-        max_age = policy.local_max_age
-    elif raw.source_class == MODEL_FALLBACK:
+        age = None if observed_at is None else (current - observed_at).total_seconds()
+        return SourceFreshness(True, age)
+    if raw.source_class == MODEL_FALLBACK:
         max_age = policy.model_max_age
     else:
         max_age = None
@@ -356,7 +369,13 @@ def shared_station_health(
     now: datetime,
     policy: FreshnessPolicy = FreshnessPolicy(),
 ) -> StationHealth:
-    """Validate the shared local T/RH pair used to corroborate rain zero."""
+    """Validate the shared local T/RH pair used to corroborate rain zero.
+
+    A local station's temperature and humidity sensors also update
+    independently, so skew and state-change age must not turn a still
+    available pair into a failed health signal.  Model values are never used
+    to corroborate a local zero-rain source.
+    """
     temp_freshness = source_freshness(
         EntityStateInput(
             temperature.provenance.entity_id,
@@ -395,7 +414,11 @@ def shared_station_health(
     skew: float | None = None
     if temp_at is not None and humidity_at is not None:
         skew = abs((temp_at - humidity_at).total_seconds())
-        if skew > policy.max_temperature_humidity_skew.total_seconds():
+        if (
+            temperature.provenance.source_class == MODEL_FALLBACK
+            and relative_humidity.provenance.source_class == MODEL_FALLBACK
+            and skew > policy.max_temperature_humidity_skew.total_seconds()
+        ):
             reasons.append("station_temperature_humidity_skew")
     # A model source can be fresh enough for a potential, but not for proving
     # that a physical local rain sensor has reported a stable dry state.
@@ -406,7 +429,6 @@ def shared_station_health(
         and humidity_freshness.fresh
         and not temperature.provenance.error_codes
         and not relative_humidity.provenance.error_codes
-        and (skew is None or skew <= policy.max_temperature_humidity_skew.total_seconds())
     )
     return StationHealth(
         fresh=fresh,
@@ -424,23 +446,13 @@ def _safe_weather_value(
     now: datetime,
     policy: FreshnessPolicy,
     require_local: bool = True,
-    allow_stale_zero_with_station: bool = False,
 ) -> tuple[float | None, tuple[str, ...]]:
     """Return a safety input or explicit reason codes; never synthesize data."""
     reasons = list(normalized.provenance.error_codes)
     if require_local and raw.source_class != LOCAL_OBSERVATION:
         reasons.append(f"{normalized.name}_not_local")
     freshness = source_freshness(raw, now=now, policy=policy)
-    # GW1100A often leaves a true zero rate unchanged.  Fresh outdoor T/RH
-    # corroboration is checked by WeatherSafetyInputs.shared_station_fresh;
-    # preserve this zero even when its individual state timestamp is old.
-    zero_exception = (
-        allow_stale_zero_with_station
-        and normalized.value == 0.0
-        and freshness.error_codes == ("stale",)
-        and raw.source_class == LOCAL_OBSERVATION
-    )
-    if not freshness.fresh and not zero_exception:
+    if not freshness.fresh:
         reasons.extend(f"{normalized.name}_{code}" for code in freshness.error_codes)
     if reasons:
         return None, tuple(dict.fromkeys(reasons))
@@ -523,7 +535,6 @@ class VentilationZoneRuntime:
             inputs.outdoor.rain_rate,
             now=evaluated_at,
             policy=self._freshness_policy,
-            allow_stale_zero_with_station=True,
         )
         gust, gust_errors = _safe_weather_value(
             normalized["wind_gust"],

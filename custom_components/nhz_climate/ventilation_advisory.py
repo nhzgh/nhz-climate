@@ -20,8 +20,9 @@ from .ventilation import VentilationEvaluation
 STATUS_YES = "ja"
 STATUS_AMBIVALENT = "ambivalent"
 STATUS_NO = "nein"
+STATUS_OPTIONAL = "optional"
 STATUS_UNAVAILABLE = "unavailable"
-VALID_STATUSES = frozenset((STATUS_YES, STATUS_AMBIVALENT, STATUS_NO))
+VALID_STATUSES = frozenset((STATUS_YES, STATUS_AMBIVALENT, STATUS_NO, STATUS_OPTIONAL))
 
 EFFECT_BENEFIT = "benefit"
 EFFECT_HARM = "harm"
@@ -118,6 +119,7 @@ class ReplayMetrics:
     recommendations_yes: int
     recommendations_ambivalent: int
     recommendations_no: int
+    recommendations_optional: int
     transitions: int
     labelled_samples: int
     true_positives: int
@@ -219,7 +221,7 @@ CONFLICT_MATRIX: dict[tuple[str, str], str] = {
     (EFFECT_BENEFIT, EFFECT_BENEFIT): STATUS_YES,
     (EFFECT_BENEFIT, EFFECT_NEUTRAL): STATUS_YES,
     (EFFECT_NEUTRAL, EFFECT_BENEFIT): STATUS_YES,
-    (EFFECT_NEUTRAL, EFFECT_NEUTRAL): STATUS_NO,
+    (EFFECT_NEUTRAL, EFFECT_NEUTRAL): STATUS_OPTIONAL,
     (EFFECT_HARM, EFFECT_HARM): STATUS_NO,
     (EFFECT_HARM, EFFECT_NEUTRAL): STATUS_NO,
     (EFFECT_NEUTRAL, EFFECT_HARM): STATUS_NO,
@@ -243,6 +245,8 @@ def combine_assessments(humidity: PartAssessment, thermal: PartAssessment) -> tu
     reasons = (*humidity.reason_codes, *thermal.reason_codes)
     if status == STATUS_AMBIVALENT:
         reasons = (*reasons, "humidity_thermal_conflict")
+    elif status == STATUS_OPTIONAL:
+        reasons = (*reasons, "climate_neutral_ventilation_optional")
     elif status == STATUS_NO:
         reasons = (*reasons, "no_net_ventilation_benefit")
     else:
@@ -474,6 +478,7 @@ def replay(samples: Iterable[ReplaySample]) -> ReplayResult:
         recommendations_yes=sum(item.status == STATUS_YES for item in decisions),
         recommendations_ambivalent=sum(item.status == STATUS_AMBIVALENT for item in decisions),
         recommendations_no=sum(item.status == STATUS_NO for item in decisions),
+        recommendations_optional=sum(item.status == STATUS_OPTIONAL for item in decisions),
         transitions=transitions,
         labelled_samples=labels,
         true_positives=true_positives,

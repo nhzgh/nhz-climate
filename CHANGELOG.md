@@ -2,6 +2,23 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.10.0 - 2026-09-27
+
+- Judge unchanged local Home Assistant measurements by current entity
+  availability and valid value/unit/range instead of treating an old
+  `last_updated` timestamp as a failed heartbeat. Model fallback values keep
+  their stricter age and provider-timestep checks.
+- Stop rejecting independently updated local temperature/humidity pairs for
+  timestamp skew while retaining exact model-timestep validation.
+- Add the fourth ventilation recommendation `optional` for climate-neutral
+  conditions: opening a window is neither required nor harmful, for example
+  when the user wants to reduce CO2. This does not claim that CO2 was measured.
+- Record the optional recommendation in a separate monotonic pilot-duration
+  sensor and expose humidity and thermal partial decisions unchanged.
+- Reload the integration automatically after adding, changing, or removing a
+  ventilation zone or building surface, so its entities appear immediately.
+- Update the packaged integration icon.
+
 ## 0.9.3 - 2026-09-27
 
 - Treat a missing or unavailable rain-rate source as an omitted optional

@@ -24,9 +24,10 @@ from typing import Any, Mapping
 STATUS_YES = "ja"
 STATUS_AMBIVALENT = "ambivalent"
 STATUS_NO = "nein"
+STATUS_OPTIONAL = "optional"
 STATUS_UNAVAILABLE = "unavailable"
 VALID_STATUSES = frozenset(
-    (STATUS_YES, STATUS_AMBIVALENT, STATUS_NO, STATUS_UNAVAILABLE)
+    (STATUS_YES, STATUS_AMBIVALENT, STATUS_NO, STATUS_OPTIONAL, STATUS_UNAVAILABLE)
 )
 
 REASON_RAIN = "rain"
@@ -64,6 +65,7 @@ class PilotTotals:
     yes_hours: float = 0.0
     ambivalent_hours: float = 0.0
     no_hours: float = 0.0
+    optional_hours: float = 0.0
     unavailable_hours: float = 0.0
     rain_lock_hours: float = 0.0
     gust_lock_hours: float = 0.0
@@ -138,6 +140,8 @@ class PilotMetrics:
             self.totals.ambivalent_hours += hours
         elif status == STATUS_NO:
             self.totals.no_hours += hours
+        elif status == STATUS_OPTIONAL:
+            self.totals.optional_hours += hours
         else:
             self.totals.unavailable_hours += hours
         if _event_reason(reasons, REASON_RAIN):

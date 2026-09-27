@@ -275,7 +275,7 @@ class VentilationDecisionSensor(VentilationEntity):
     """Advisory only: this entity is deliberately not a control command."""
 
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["ja", "ambivalent", "nein"]
+    _attr_options = ["ja", "ambivalent", "nein", "optional"]
 
     def __init__(self, context: VentilationZoneContext) -> None:
         super().__init__(context, "decision", "Fenster öffnen (Arbeitswert)")
@@ -384,6 +384,7 @@ PILOT_TOTALS: dict[str, tuple[str, str]] = {
     "yes_hours": ("Pilotzeit Empfehlung ja", UnitOfTime.HOURS),
     "ambivalent_hours": ("Pilotzeit Empfehlung ambivalent", UnitOfTime.HOURS),
     "no_hours": ("Pilotzeit Empfehlung nein", UnitOfTime.HOURS),
+    "optional_hours": ("Pilotzeit Lüften optional", UnitOfTime.HOURS),
     "unavailable_hours": ("Pilotzeit Daten nicht verfügbar", UnitOfTime.HOURS),
     "rain_lock_hours": ("Pilotzeit Regensperre", UnitOfTime.HOURS),
     "gust_lock_hours": ("Pilotzeit Böensperre", UnitOfTime.HOURS),

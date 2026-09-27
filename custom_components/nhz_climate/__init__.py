@@ -69,8 +69,20 @@ async def async_setup_entry(
     coordinator = NhzClimateCoordinator(hass, entry, api)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    # Config subentries are stored on their parent entry.  Home Assistant
+    # notifies this listener for additions, edits, removals, and parent option
+    # changes, so the sensor platform is rebuilt from the current subentry
+    # collection without requiring the user to reload the integration.
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_update_listener(
+    hass: HomeAssistant, entry: NhzClimateConfigEntry
+) -> None:
+    """Reload an active entry after its parent data or subentries change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(

@@ -52,7 +52,15 @@ class VentilationInputs:
 
 @dataclass(frozen=True)
 class FreshnessPolicy:
-    """Explicit, site-overridable source-quality limits for the SL pilot."""
+    """Explicit, site-overridable source-quality limits for the SL pilot.
+
+    Home Assistant's ``last_updated`` changes only when a state changes.  It
+    is therefore not a heartbeat for a local observation: a completely valid
+    but unchanged room temperature must remain usable.  ``local_max_age`` is
+    retained for configuration compatibility, but local observations are
+    intentionally not age-gated.  Model fallback values, on the other hand,
+    represent a provider timestep and remain age- and alignment-gated.
+    """
 
     local_max_age: timedelta = timedelta(minutes=30)
     model_max_age: timedelta = timedelta(minutes=120)
@@ -122,8 +130,6 @@ def _measurement_age_seconds(measurement: Measurement, now: datetime) -> float |
 
 
 def _max_age_for(measurement: Measurement, policy: FreshnessPolicy) -> timedelta | None:
-    if measurement.source_class == LOCAL_OBSERVATION:
-        return policy.local_max_age
     if measurement.source_class == MODEL_FALLBACK:
         return policy.model_max_age
     return None
@@ -140,16 +146,21 @@ def _measurement_quality(
     value = _finite_number(measurement.value)
     if value is None:
         flags.append(f"{name}_invalid_value")
-    max_age = _max_age_for(measurement, policy)
-    if max_age is None:
+    if measurement.source_class not in SUPPORTED_SOURCE_CLASSES:
         flags.append(f"{name}_unsupported_source_class")
     age_seconds = _measurement_age_seconds(measurement, now)
-    if age_seconds is None:
-        flags.append(f"{name}_missing_timestamp")
-    elif age_seconds < 0:
-        flags.append(f"{name}_future_timestamp")
-    elif max_age is not None and age_seconds > max_age.total_seconds():
-        flags.append(f"{name}_stale")
+    # Local HA states are availability signals, not periodic reports.  Their
+    # timestamp may be old (or absent in a direct test adapter) while the
+    # source is still available and its value is valid.  Only model fallback
+    # values have a provider timestep whose age can establish staleness.
+    if measurement.source_class == MODEL_FALLBACK:
+        max_age = _max_age_for(measurement, policy)
+        if age_seconds is None:
+            flags.append(f"{name}_missing_timestamp")
+        elif age_seconds < 0:
+            flags.append(f"{name}_future_timestamp")
+        elif max_age is not None and age_seconds > max_age.total_seconds():
+            flags.append(f"{name}_stale")
     return age_seconds, tuple(flags)
 
 
@@ -165,16 +176,17 @@ def _pair_skew(
         return None, ()  # The individual missing-timestamp flags are clearer.
     skew_seconds = abs((temperature_at - humidity_at).total_seconds())
     flags: list[str] = []
-    if skew_seconds > policy.max_temperature_humidity_skew.total_seconds():
-        flags.append(f"{pair_name}_temperature_humidity_skew")
-    # A model T/RH pair has hourly semantics: both fields must be for the same
-    # provider timestep, not merely within a permissive local-sensor interval.
+    # Independently updating local HA sensors do not share a reporting clock,
+    # so their timestamp skew is diagnostic only.  A model T/RH pair has
+    # provider-timestep semantics and must refer to exactly the same step.
     if (
         temperature.source_class == MODEL_FALLBACK
         and humidity.source_class == MODEL_FALLBACK
-        and skew_seconds != 0
     ):
-        flags.append(f"{pair_name}_model_timestamp_mismatch")
+        if skew_seconds > policy.max_temperature_humidity_skew.total_seconds():
+            flags.append(f"{pair_name}_temperature_humidity_skew")
+        if skew_seconds != 0:
+            flags.append(f"{pair_name}_model_timestamp_mismatch")
     return skew_seconds, tuple(flags)
 
 

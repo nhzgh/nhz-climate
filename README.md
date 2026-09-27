@@ -29,7 +29,7 @@ runs HACS validation, creates the GitHub release and verifies that it is
 published on the exact approved commit supplied to the workflow. Site rollout starts only after HACS
 reports that release as its latest version.
 
-## 0.9 feature scope
+## 0.10 feature scope
 
 - ERA5 climate profiles for 1970–2025 and the full available history.
 - True cohort-based cumulative precipitation P10/P50/P90 for 7, 30 and 90
@@ -42,7 +42,15 @@ reports that release as its latest version.
 - Calendar-day temperature anomaly based on completed local observations, the
   current explicitly selected outdoor sensor and the remaining forecast.
 - Configurable advisory-only ventilation zones and LTS-compatible pilot
-  metrics.
+  metrics. Local HA measurements remain valid while their entities are
+  available, even if their value has not changed recently; provider-model
+  fallbacks retain strict timestep checks.
+- Four explainable ventilation states: `ja`, `ambivalent`, `nein` and
+  `optional`. `optional` means that ventilation is climatically neutral and
+  may be used for another purpose such as CO2 reduction; it does not imply a
+  CO2 measurement.
+- Newly added or changed ventilation zones and surfaces become active without
+  a manual integration reload.
 
 Surface values are incident, unshaded working values. They are not an
 EnergyPlus heating/cooling-load model.
