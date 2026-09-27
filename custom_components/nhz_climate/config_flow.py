@@ -446,6 +446,10 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _validate(self, data: dict[str, Any]) -> dict[str, str]:
         errors: dict[str, str] = {}
+        try:
+            cv.url(data[CONF_BASE_URL])
+        except vol.Invalid:
+            return {CONF_BASE_URL: "invalid_url"}
         api = NhzClimateApi(
             aiohttp_client.async_get_clientsession(self.hass),
             data[CONF_BASE_URL],
@@ -501,7 +505,12 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(
                     CONF_BASE_URL,
                     default=form_defaults.get(CONF_BASE_URL, DEFAULT_BASE_URL),
-                ): cv.url,
+                ): TextSelector(
+                    TextSelectorConfig(
+                        type=TextSelectorType.URL,
+                        autocomplete="url",
+                    )
+                ),
                 token_field: TextSelector(
                     TextSelectorConfig(
                         type=TextSelectorType.PASSWORD,
@@ -553,7 +562,6 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_OUTDOOR_TEMPERATURE_ENTITY,
                     CONF_OUTDOOR_HUMIDITY_ENTITY,
                     CONF_PRESSURE_ENTITY,
-                    CONF_RAIN_RATE_ENTITY,
                     CONF_WIND_GUST_ENTITY,
                 )
             ):
@@ -738,7 +746,6 @@ class NhzClimateVentilationZoneSubentryFlow(ConfigSubentryFlow):
                 CONF_OUTDOOR_TEMPERATURE_ENTITY,
                 CONF_OUTDOOR_HUMIDITY_ENTITY,
                 CONF_PRESSURE_ENTITY,
-                CONF_RAIN_RATE_ENTITY,
                 CONF_WIND_GUST_ENTITY,
             )
         )

@@ -1,5 +1,8 @@
 {
   "config": {
+    "initiate_flow": {
+      "user": "Weiteren NHZ-Climate-Standort hinzufügen"
+    },
     "step": {
       "user": {
         "title": "Mit NHZ Climate verbinden",
@@ -66,6 +69,7 @@
     },
     "error": {
       "cannot_connect": "Verbindung zur API nicht möglich",
+      "invalid_url": "Gib eine gültige API-URL ein",
       "invalid_auth": "Ungültiger API-Token",
       "unknown_site": "Der Standort ist über die API nicht verfügbar",
       "source_not_found": "Die lokale Quellen-Entity wurde nicht gefunden",
@@ -95,6 +99,9 @@
   "config_subentries": {
     "ventilation_zone": {
       "title": "Lüftungszone",
+      "initiate_flow": {
+        "user": "Lüftungszone hinzufügen"
+      },
       "step": {
         "user": {
           "title": "Lüftungszone hinzufügen",
@@ -117,7 +124,7 @@
         }
       },
       "error": {
-        "outside_sources_missing": "Konfiguriere zuerst Außenlufttemperatur, Außenluftfeuchte, Luftdruck, Regenrate und Windböen unter „Konfigurieren“ im übergeordneten NHZ-Climate-Eintrag.",
+        "outside_sources_missing": "Konfiguriere zuerst Außenlufttemperatur, Außenluftfeuchte, Luftdruck und Windböen unter „Konfigurieren“ im übergeordneten NHZ-Climate-Eintrag.",
         "zone_id_exists": "Diese stabile Zonen-ID wird bereits verwendet.",
         "invalid_slug": "Nur Kleinbuchstaben, Ziffern und Unterstriche verwenden.",
         "source_not_found": "Die gewählte Entity wurde nicht gefunden.",
@@ -129,6 +136,9 @@
     },
     "surface": {
       "title": "Fassaden- oder Dachfläche",
+      "initiate_flow": {
+        "user": "Fläche hinzufügen"
+      },
       "step": {
         "user": {
           "title": "Flächenidentität hinzufügen",

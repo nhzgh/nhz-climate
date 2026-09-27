@@ -59,11 +59,11 @@ class WeatherSafetyInputs:
     """Local live safety sources; no forecast value can substitute these.
 
     ``shared_station_fresh`` represents the separately validated, common
-    GW1100A health signal.  It specifically lets an unchanged ``0`` rain-rate
-    state prove dry, while a station outage can never be interpreted as dry.
+    GW1100A health signal.  It specifically validates an unchanged ``0``
+    rain-rate state.  Rain inputs are optional: when neither a usable rate nor
+    a positive counter delta exists, the advisory continues without that
+    interlock.  Every measured positive rate or counter delta still locks;
     ``rain_counter_mm`` is optional and only positive differences are rain.
-    Its first observed value (and a counter reset) intentionally proves
-    neither wet nor dry without a valid rate source.
     """
 
     shared_station_fresh: bool
@@ -303,17 +303,25 @@ class _WeatherGate:
                 reasons.append("rain_counter_increase")
             return WeatherSafetyResult(True, True, tuple(reasons))
 
-        # A negative cumulative delta is a reset, never a dry proof.  The
-        # common SL rate source can independently prove dry when fresh.
+        # A negative cumulative delta is a reset, never a rain event.  A known
+        # recent rain event keeps its drydown even if the optional rate source
+        # becomes unavailable in the meantime.
         if counter_reset and rate is None:
-            # A reset cannot discharge an already active rain lock.  Without
-            # the live rate source there is no evidence for the drydown that
-            # would make release safe.
             if self._last_rain_at is not None:
-                return WeatherSafetyResult(False, True, ("rain_counter_reset", "rain_drydown"))
-            return WeatherSafetyResult(False, False, ("rain_counter_reset",))
+                elapsed = now - self._last_rain_at
+                if elapsed < RAIN_DRYDOWN:
+                    return WeatherSafetyResult(
+                        True, True, ("rain_counter_reset", "rain_drydown")
+                    )
+                self._last_rain_at = None
+            return WeatherSafetyResult(True, False)
         if rate is None:
-            return WeatherSafetyResult(False, False, ("rain_source_missing",))
+            if self._last_rain_at is not None:
+                elapsed = now - self._last_rain_at
+                if elapsed < RAIN_DRYDOWN:
+                    return WeatherSafetyResult(True, True, ("rain_drydown",))
+                self._last_rain_at = None
+            return WeatherSafetyResult(True, False)
         if rate < 0:
             return WeatherSafetyResult(False, False, ("rain_rate_negative",))
         if rate == 0 and not weather.shared_station_fresh:

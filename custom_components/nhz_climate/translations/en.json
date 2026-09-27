@@ -1,5 +1,8 @@
 {
   "config": {
+    "initiate_flow": {
+      "user": "Add another NHZ Climate site"
+    },
     "step": {
       "user": {
         "title": "Connect to NHZ Climate",
@@ -66,6 +69,7 @@
     },
     "error": {
       "cannot_connect": "Cannot connect to the API",
+      "invalid_url": "Enter a valid API URL",
       "invalid_auth": "Invalid API token",
       "unknown_site": "The site is not available from the API",
       "source_not_found": "The local source entity was not found",
@@ -95,6 +99,9 @@
   "config_subentries": {
     "ventilation_zone": {
       "title": "Ventilation zone",
+      "initiate_flow": {
+        "user": "Add ventilation zone"
+      },
       "step": {
         "user": {
           "title": "Add ventilation zone",
@@ -117,7 +124,7 @@
         }
       },
       "error": {
-        "outside_sources_missing": "First configure outdoor temperature, humidity, pressure, rain rate, and wind gusts under Configure on the parent NHZ Climate entry.",
+        "outside_sources_missing": "First configure outdoor temperature, humidity, pressure, and wind gusts under Configure on the parent NHZ Climate entry.",
         "zone_id_exists": "This stable zone ID is already in use.",
         "invalid_slug": "Use only lowercase letters, numbers, and underscores.",
         "source_not_found": "The selected entity was not found.",
@@ -129,6 +136,9 @@
     },
     "surface": {
       "title": "Facade or roof surface",
+      "initiate_flow": {
+        "user": "Add surface"
+      },
       "step": {
         "user": {
           "title": "Add surface identity",

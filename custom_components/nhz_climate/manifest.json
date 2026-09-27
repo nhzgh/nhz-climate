@@ -6,8 +6,8 @@
   "documentation": "https://oc.nhz.de/docs",
   "issue_tracker": "https://github.com/nhzgh/nhz-climate/issues",
   "after_dependencies": ["met", "weather"],
-  "integration_type": "service",
+  "integration_type": "hub",
   "iot_class": "cloud_polling",
   "requirements": [],
-  "version": "0.9.2"
+  "version": "0.9.3"
 }

@@ -2,6 +2,16 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.9.3 - 2026-09-27
+
+- Treat a missing or unavailable rain-rate source as an omitted optional
+  safety interlock instead of making the ventilation decision unavailable;
+  every measured rain event and its drydown still block ventilation.
+- Label the add-site, add-zone and add-surface actions explicitly in the Home
+  Assistant integration UI and classify the integration as a hub.
+- Replace the non-serializable URL validator in the initial config form with
+  Home Assistant's URL selector, fixing the Add Service 500 response.
+
 ## 0.9.2 - 2026-09-27
 
 - Make every optional source entity genuinely clearable in the initial and
