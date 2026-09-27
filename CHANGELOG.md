@@ -2,6 +2,17 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.9.2 - 2026-09-27
+
+- Make every optional source entity genuinely clearable in the initial and
+  options flows instead of restoring an empty or previous selector default.
+- Filter entity pickers by physical device class and use a weather-domain
+  picker for the forecast entity.
+- Preserve all submitted values when one source fails validation and report
+  the error on the affected field.
+- Stop injecting SL source entities into a new configuration before its site
+  has been validated.
+
 ## 0.9.1 - 2026-09-25
 
 - Expose shared outdoor and ventilation safety sources in Home Assistant's

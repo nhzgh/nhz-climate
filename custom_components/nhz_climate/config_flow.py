@@ -70,7 +70,6 @@ from .const import (
     SUBENTRY_TYPE_SURFACE,
     SL_VENTILATION_ZONE_PRESETS,
     SL_SURFACE_PRESETS,
-    SL_SOURCE_PRESETS,
 )
 from .surfaces import Surface, SurfaceType, SurfaceValidationError
 
@@ -151,9 +150,40 @@ def _source_error(hass, entity_id: str, variable: str) -> str | None:
     return None
 
 
-def _sensor_selector() -> EntitySelector:
-    """Return HA's searchable single-sensor entity picker."""
-    return EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False))
+def _sensor_selector(device_class: str | None = None) -> EntitySelector:
+    """Return a searchable sensor picker limited to one physical quantity."""
+    return EntitySelector(
+        EntitySelectorConfig(
+            domain="sensor",
+            device_class=device_class,
+            multiple=False,
+        )
+    )
+
+
+def _weather_selector() -> EntitySelector:
+    """Return the weather-entity picker used for hourly forecasts."""
+    return EntitySelector(EntitySelectorConfig(domain="weather", multiple=False))
+
+
+def _optional_entity_field(
+    key: str,
+    defaults: dict[str, Any],
+    selector: EntitySelector,
+) -> dict:
+    """Build a clearable optional selector with a non-binding suggestion.
+
+    ``default=`` makes voluptuous restore the previous entity when the user
+    clears the field.  Home Assistant's ``suggested_value`` displays an
+    existing value but still permits an omitted/empty submission.
+    """
+    value = str(defaults.get(key, "")).strip()
+    marker = (
+        vol.Optional(key, description={"suggested_value": value})
+        if value
+        else vol.Optional(key)
+    )
+    return {marker: selector}
 
 
 def _number_selector(minimum: float, maximum: float) -> NumberSelector:
@@ -170,14 +200,16 @@ def _number_selector(minimum: float, maximum: float) -> NumberSelector:
 
 def _source_schema(defaults: dict[str, Any]) -> dict:
     return {
-        vol.Optional(
+        **_optional_entity_field(
             CONF_RAIN_SOURCE_ENTITY,
-            default=defaults.get(CONF_RAIN_SOURCE_ENTITY, ""),
-        ): _sensor_selector(),
-        vol.Optional(
+            defaults,
+            _sensor_selector("precipitation"),
+        ),
+        **_optional_entity_field(
             CONF_TEMPERATURE_SOURCE_ENTITY,
-            default=defaults.get(CONF_TEMPERATURE_SOURCE_ENTITY, ""),
-        ): _sensor_selector(),
+            defaults,
+            _sensor_selector("temperature"),
+        ),
     }
 
 
@@ -192,30 +224,36 @@ def _ventilation_source_schema(
     """
 
     schema = {
-        vol.Optional(
+        **_optional_entity_field(
             CONF_OUTDOOR_TEMPERATURE_ENTITY,
-            default=defaults.get(CONF_OUTDOOR_TEMPERATURE_ENTITY, ""),
-        ): _sensor_selector(),
-        vol.Optional(
+            defaults,
+            _sensor_selector("temperature"),
+        ),
+        **_optional_entity_field(
             CONF_OUTDOOR_HUMIDITY_ENTITY,
-            default=defaults.get(CONF_OUTDOOR_HUMIDITY_ENTITY, ""),
-        ): _sensor_selector(),
-        vol.Optional(
+            defaults,
+            _sensor_selector("humidity"),
+        ),
+        **_optional_entity_field(
             CONF_PRESSURE_ENTITY,
-            default=defaults.get(CONF_PRESSURE_ENTITY, ""),
-        ): _sensor_selector(),
-        vol.Optional(
+            defaults,
+            _sensor_selector("atmospheric_pressure"),
+        ),
+        **_optional_entity_field(
             CONF_RAIN_RATE_ENTITY,
-            default=defaults.get(CONF_RAIN_RATE_ENTITY, ""),
-        ): _sensor_selector(),
-        vol.Optional(
+            defaults,
+            _sensor_selector("precipitation_intensity"),
+        ),
+        **_optional_entity_field(
             CONF_RAIN_COUNTER_ENTITY,
-            default=defaults.get(CONF_RAIN_COUNTER_ENTITY, ""),
-        ): _sensor_selector(),
-        vol.Optional(
+            defaults,
+            _sensor_selector("precipitation"),
+        ),
+        **_optional_entity_field(
             CONF_WIND_GUST_ENTITY,
-            default=defaults.get(CONF_WIND_GUST_ENTITY, ""),
-        ): _sensor_selector(),
+            defaults,
+            _sensor_selector("wind_speed"),
+        ),
     }
     if include_provider_interval:
         schema[
@@ -235,11 +273,11 @@ def _zone_schema(defaults: dict[str, Any], *, allow_zone_id: bool) -> dict:
         vol.Required(
             CONF_INDOOR_TEMPERATURE_ENTITY,
             default=defaults.get(CONF_INDOOR_TEMPERATURE_ENTITY, ""),
-        ): _sensor_selector(),
+        ): _sensor_selector("temperature"),
         vol.Required(
             CONF_INDOOR_HUMIDITY_ENTITY,
             default=defaults.get(CONF_INDOOR_HUMIDITY_ENTITY, ""),
-        ): _sensor_selector(),
+        ): _sensor_selector("humidity"),
     }
     if allow_zone_id:
         schema = {
@@ -317,9 +355,9 @@ def _surface_schema(
         vol.Required(
             CONF_GROSS_AREA_M2, default=defaults.get(CONF_GROSS_AREA_M2, 0.0)
         ): _number_selector(0, 100000),
-        vol.Optional(
-            CONF_GTI_ENTITY, default=defaults.get(CONF_GTI_ENTITY, "")
-        ): _sensor_selector(),
+        **_optional_entity_field(
+            CONF_GTI_ENTITY, defaults, _sensor_selector("irradiance")
+        ),
     }
     surface_type = defaults.get(CONF_SURFACE_TYPE)
     if include_type:
@@ -406,7 +444,8 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
     _pending_user_data: dict[str, Any] | None = None
     _pending_subentries: list[dict[str, Any]] | None = None
 
-    async def _validate(self, data: dict[str, Any]) -> str | None:
+    async def _validate(self, data: dict[str, Any]) -> dict[str, str]:
+        errors: dict[str, str] = {}
         api = NhzClimateApi(
             aiohttp_client.async_get_clientsession(self.hass),
             data[CONF_BASE_URL],
@@ -415,30 +454,29 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
         try:
             sites = await api.sites()
         except NhzClimateAuthError:
-            return "invalid_auth"
+            return {"base": "invalid_auth"}
         except NhzClimateError:
-            return "cannot_connect"
+            return {"base": "cannot_connect"}
         if data[CONF_SITE] not in {item.get("slug") for item in sites}:
-            return "unknown_site"
-        for entity_id, variable in (
-            (data.get(CONF_RAIN_SOURCE_ENTITY, ""), "rain"),
-            (data.get(CONF_TEMPERATURE_SOURCE_ENTITY, ""), "temperature_2m"),
+            return {"base": "unknown_site"}
+        for field, variable in (
+            (CONF_RAIN_SOURCE_ENTITY, "rain"),
+            (CONF_TEMPERATURE_SOURCE_ENTITY, "temperature_2m"),
         ):
-            if error := _source_error(self.hass, entity_id, variable):
-                return error
-        if errors := _validate_ventilation_sources(self.hass, data):
-            return next(iter(errors.values()))
-        return None
+            if error := _source_error(self.hass, data.get(field, ""), variable):
+                errors[field] = error
+        errors.update(_validate_ventilation_sources(self.hass, data))
+        return errors
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
+        form_defaults = dict(user_input or {})
         if user_input is not None:
             data = normalize(user_input)
-            if error := await self._validate(data):
-                errors["base"] = error
-            else:
+            errors = await self._validate(data)
+            if not errors:
                 await self.async_set_unique_id(
                     f"{data[CONF_BASE_URL]}|{data[CONF_SITE]}|{data[CONF_DATASET]}"
                 )
@@ -450,10 +488,21 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
                     title=f"NHZ Climate {data[CONF_SITE]}", data=data
                 )
 
+        token_value = str(form_defaults.get(CONF_TOKEN, ""))
+        token_field = (
+            vol.Required(
+                CONF_TOKEN, description={"suggested_value": token_value}
+            )
+            if token_value
+            else vol.Required(CONF_TOKEN)
+        )
         schema = vol.Schema(
             {
-                vol.Required(CONF_BASE_URL, default=DEFAULT_BASE_URL): cv.url,
-                vol.Required(CONF_TOKEN): TextSelector(
+                vol.Required(
+                    CONF_BASE_URL,
+                    default=form_defaults.get(CONF_BASE_URL, DEFAULT_BASE_URL),
+                ): cv.url,
+                token_field: TextSelector(
                     TextSelectorConfig(
                         type=TextSelectorType.PASSWORD,
                         autocomplete="current-password",
@@ -461,22 +510,30 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
                 # Text selectors remain JSON-serializable in current HA;
                 # site validity is checked against the API below.
-                vol.Required(CONF_SITE, default="sl"): TextSelector(
-                    TextSelectorConfig()
-                ),
-                vol.Required(CONF_DATASET, default=DEFAULT_DATASET): TextSelector(
-                    TextSelectorConfig()
-                ),
                 vol.Required(
-                    CONF_FORECAST_ENTITY, default=DEFAULT_FORECAST_ENTITY
-                ): _sensor_selector(),
+                    CONF_SITE, default=form_defaults.get(CONF_SITE, "sl")
+                ): TextSelector(TextSelectorConfig()),
                 vol.Required(
-                    CONF_VARIABLES, default=",".join(DEFAULT_VARIABLES)
+                    CONF_DATASET,
+                    default=form_defaults.get(CONF_DATASET, DEFAULT_DATASET),
+                ): TextSelector(TextSelectorConfig()),
+                vol.Required(
+                    CONF_FORECAST_ENTITY,
+                    default=form_defaults.get(
+                        CONF_FORECAST_ENTITY, DEFAULT_FORECAST_ENTITY
+                    ),
+                ): _weather_selector(),
+                vol.Required(
+                    CONF_VARIABLES,
+                    default=form_defaults.get(
+                        CONF_VARIABLES, ",".join(DEFAULT_VARIABLES)
+                    ),
                 ): str,
-                # The default site is SL.  Every source remains visible and
-                # editable; another site must replace these before validation.
-                **_source_schema(SL_SOURCE_PRESETS),
-                **_ventilation_source_schema(SL_SOURCE_PRESETS),
+                # Source fields are intentionally neutral until the selected
+                # site is known.  Existing values are retained after errors,
+                # while every optional picker remains genuinely clearable.
+                **_source_schema(form_defaults),
+                **_ventilation_source_schema(form_defaults),
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
@@ -569,8 +626,8 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
             f"{data[CONF_BASE_URL]}|{data[CONF_SITE]}|{data[CONF_DATASET]}"
         )
         self._abort_if_unique_id_configured(updates=data)
-        if error := await self._validate(data):
-            return self.async_abort(reason=error)
+        if errors := await self._validate(data):
+            return self.async_abort(reason=next(iter(errors.values())))
         return self.async_create_entry(title=f"NHZ Climate {data[CONF_SITE]}", data=data)
 
     @staticmethod
@@ -612,11 +669,19 @@ class NhzClimateConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
                 return self.async_update_reload_and_abort(entry, data_updates=updates)
 
+        defaults = dict(entry.data)
+        defaults.update(entry.options)
+        if user_input is not None:
+            # ``normalize`` intentionally completes omitted source keys with
+            # empty strings for successful persistence.  Error forms must
+            # overlay only values the frontend actually submitted, otherwise
+            # one invalid field would blank every unrelated selector.
+            defaults.update(user_input)
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=vol.Schema(
                 _ventilation_source_schema(
-                    dict(entry.data), include_provider_interval=False
+                    defaults, include_provider_interval=False
                 )
             ),
             errors=errors,
@@ -648,6 +713,8 @@ class NhzClimateOptionsFlow(OptionsFlow):
 
         defaults = dict(self.config_entry.data)
         defaults.update(self.config_entry.options)
+        if user_input is not None:
+            defaults.update(user_input)
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
