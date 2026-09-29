@@ -28,7 +28,11 @@ from .ventilation import (
     VentilationInputs,
     evaluate_ventilation_potential,
 )
-from .ventilation_advisory import AdvisoryDecision, VentilationAdvisory, WeatherSafetyInputs
+from .ventilation_advisory import (
+    AdvisoryDecision,
+    VentilationAdvisory,
+    WeatherSafetyInputs,
+)
 
 
 Quantity = Literal[
@@ -172,10 +176,19 @@ class VentilationRuntimeSnapshot:
     station_health: StationHealth
     provenance: dict[str, SourceProvenance] = field(default_factory=dict)
     error_codes: tuple[str, ...] = ()
+    candidate_remaining_seconds: int | None = None
+
+    @property
+    def status(self) -> str:
+        return self.decision.status
 
     @property
     def available(self) -> bool:
-        return self.potential.available and self.decision.status != "unavailable"
+        # The advisory only publishes a non-unavailable status when it has a
+        # confirmed recommendation or an active safety lock.  In particular,
+        # a known rain/gust lock remains a valid immediate ``no`` even when a
+        # separate climate input is currently invalid.
+        return self.decision.status != "unavailable"
 
     def as_attributes(self) -> dict[str, object]:
         """Return plain JSON-compatible diagnostic attributes for HA entities."""
@@ -184,7 +197,44 @@ class VentilationRuntimeSnapshot:
             "zone_name": self.zone_name,
             "evaluated_at": self.evaluated_at.isoformat(),
             "available": self.available,
-            "status": self.decision.status,
+            "status": self.status,
+            "decision_status": self.decision.status,
+            "pending": self.decision.pending,
+            "candidate_status": self.decision.candidate_status,
+            "candidate_reason_codes": list(self.decision.candidate_reason_codes),
+            "candidate_started_at": (
+                self.decision.candidate_started_at.isoformat()
+                if self.decision.candidate_started_at else None
+            ),
+            "candidate_remaining_seconds": self.candidate_remaining_seconds,
+            "candidate_humidity_effect": (
+                self.decision.candidate_humidity.effect
+                if self.decision.candidate_humidity
+                else None
+            ),
+            "candidate_humidity_reason_codes": (
+                list(self.decision.candidate_humidity.reason_codes)
+                if self.decision.candidate_humidity
+                else []
+            ),
+            "candidate_thermal_effect": (
+                self.decision.candidate_thermal.effect
+                if self.decision.candidate_thermal
+                else None
+            ),
+            "candidate_thermal_reason_codes": (
+                list(self.decision.candidate_thermal.reason_codes)
+                if self.decision.candidate_thermal
+                else []
+            ),
+            "safety_lock_active": bool(
+                self.decision.weather and self.decision.weather.locked
+            ),
+            "current_weather_reason_codes": (
+                list(self.decision.weather.reason_codes)
+                if self.decision.weather
+                else []
+            ),
             "reason_codes": list(self.decision.reason_codes),
             "humidity_effect": self.decision.humidity.effect,
             "humidity_reason_codes": list(self.decision.humidity.reason_codes),
@@ -559,6 +609,14 @@ class VentilationZoneRuntime:
         )
         decision = self._advisory.evaluate(potential, weather, now=evaluated_at)
 
+        candidate_remaining_seconds: int | None = None
+        if decision.pending and decision.candidate_started_at is not None:
+            elapsed = max(
+                0.0,
+                (evaluated_at - decision.candidate_started_at).total_seconds(),
+            )
+            candidate_remaining_seconds = max(0, int(15 * 60 - elapsed))
+
         errors: list[str] = []
         for item in normalized.values():
             errors.extend(item.provenance.error_codes)
@@ -579,4 +637,5 @@ class VentilationZoneRuntime:
             station_health=station,
             provenance={name: item.provenance for name, item in normalized.items()},
             error_codes=tuple(dict.fromkeys(errors)),
+            candidate_remaining_seconds=candidate_remaining_seconds,
         )

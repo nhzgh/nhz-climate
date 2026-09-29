@@ -84,7 +84,16 @@ class WeatherSafetyResult:
 
 @dataclass(frozen=True)
 class AdvisoryDecision:
-    """The public advisory result.  It never contains a control command."""
+    """The public advisory result.  It never contains a control command.
+
+    When a confirmed recommendation exists, ``status`` and its assessments
+    describe that recommendation.  While ``pending`` is true, the separately
+    named ``candidate_*`` fields describe the unconfirmed replacement.  This
+    keeps a usable, confirmed public recommendation visible without
+    presenting a candidate's explanation as if it had already passed the
+    stability gate.  Before the first confirmation, and for immediate safety
+    or source-quality outcomes, ``status`` describes that direct result.
+    """
 
     status: str
     reason_codes: tuple[str, ...]
@@ -93,6 +102,11 @@ class AdvisoryDecision:
     air_quality: str = "not_evaluated"
     hvac: str = "not_evaluated"
     pending: bool = False
+    candidate_status: str | None = None
+    candidate_reason_codes: tuple[str, ...] = ()
+    candidate_started_at: datetime | None = None
+    candidate_humidity: PartAssessment | None = None
+    candidate_thermal: PartAssessment | None = None
     potential_available: bool = False
     weather: WeatherSafetyResult | None = None
 
@@ -365,14 +379,27 @@ class _WeatherGate:
         return WeatherSafetyResult(True, True, ("strong_gusts",))
 
 
+@dataclass(frozen=True)
+class _ConfirmedAssessment:
+    """Private snapshot of the recommendation that passed the stability gate."""
+
+    status: str
+    reason_codes: tuple[str, ...]
+    humidity: PartAssessment
+    thermal: PartAssessment
+
+
 class VentilationAdvisory:
     """Stateful S07 recommendation engine, intentionally advisory-only."""
 
     def __init__(self) -> None:
         self._weather = _WeatherGate()
         self._candidate_status: str | None = None
+        self._candidate_reason_codes: tuple[str, ...] = ()
         self._candidate_started_at: datetime | None = None
-        self._accepted_status: str | None = None
+        self._candidate_humidity: PartAssessment | None = None
+        self._candidate_thermal: PartAssessment | None = None
+        self._confirmed: _ConfirmedAssessment | None = None
 
     def evaluate(
         self,
@@ -389,18 +416,30 @@ class VentilationAdvisory:
         raw_status, raw_reasons = combine_assessments(humidity, thermal)
 
         if weather_result.locked:
-            self._reset_stabilization()
-            return AdvisoryDecision(
+            # Safety locks take effect immediately and therefore become the
+            # last effective recommendation.  Keep that confirmed ``no``
+            # visible after the lock clears while the normal assessment earns
+            # a fresh stability interval.
+            safety = _ConfirmedAssessment(
                 STATUS_NO,
                 tuple(dict.fromkeys((*weather_result.reason_codes, "safety_lock"))),
                 humidity,
                 thermal,
+            )
+            self._confirmed = safety
+            self._clear_candidate()
+            return self._confirmed_decision(
+                safety,
                 potential_available=potential.available,
                 weather=weather_result,
             )
         if raw_status == STATUS_UNAVAILABLE or not weather_result.available:
             self._reset_stabilization()
-            reason = raw_reasons if raw_status == STATUS_UNAVAILABLE else weather_result.reason_codes
+            reason = (
+                raw_reasons
+                if raw_status == STATUS_UNAVAILABLE
+                else weather_result.reason_codes
+            )
             return AdvisoryDecision(
                 STATUS_UNAVAILABLE,
                 tuple(dict.fromkeys(reason)),
@@ -410,12 +449,59 @@ class VentilationAdvisory:
                 weather=weather_result,
             )
 
-        return self._stabilize(raw_status, raw_reasons, humidity, thermal, potential, weather_result, now)
+        return self._stabilize(
+            raw_status,
+            raw_reasons,
+            humidity,
+            thermal,
+            potential,
+            weather_result,
+            now,
+        )
 
     def _reset_stabilization(self) -> None:
         self._candidate_status = None
+        self._candidate_reason_codes = ()
         self._candidate_started_at = None
-        self._accepted_status = None
+        self._candidate_humidity = None
+        self._candidate_thermal = None
+        self._confirmed = None
+
+    def _clear_candidate(self) -> None:
+        self._candidate_status = None
+        self._candidate_reason_codes = ()
+        self._candidate_started_at = None
+        self._candidate_humidity = None
+        self._candidate_thermal = None
+
+    def _confirmed_decision(
+        self,
+        confirmed: _ConfirmedAssessment,
+        *,
+        potential_available: bool,
+        weather: WeatherSafetyResult,
+        pending: bool = False,
+    ) -> AdvisoryDecision:
+        """Build a public result from the confirmed snapshot only.
+
+        Candidate information is deliberately carried in its own fields.  In
+        particular, do not replace the confirmed reason codes or assessments
+        with their current candidate equivalents while the gate is pending.
+        """
+        return AdvisoryDecision(
+            confirmed.status,
+            confirmed.reason_codes,
+            confirmed.humidity,
+            confirmed.thermal,
+            pending=pending,
+            candidate_status=self._candidate_status if pending else None,
+            candidate_reason_codes=self._candidate_reason_codes if pending else (),
+            candidate_started_at=self._candidate_started_at if pending else None,
+            candidate_humidity=self._candidate_humidity if pending else None,
+            candidate_thermal=self._candidate_thermal if pending else None,
+            potential_available=potential_available,
+            weather=weather,
+        )
 
     def _stabilize(
         self,
@@ -427,23 +513,53 @@ class VentilationAdvisory:
         weather: WeatherSafetyResult,
         now: datetime,
     ) -> AdvisoryDecision:
-        if self._accepted_status == raw_status:
-            return AdvisoryDecision(raw_status, raw_reasons, humidity, thermal, potential_available=True, weather=weather)
+        if self._confirmed is not None and self._confirmed.status == raw_status:
+            # A status which is already confirmed needs no new gate.  Refresh
+            # its explanation and component assessments from the live inputs,
+            # then cancel any incomplete replacement candidate.
+            self._confirmed = _ConfirmedAssessment(raw_status, raw_reasons, humidity, thermal)
+            self._clear_candidate()
+            return self._confirmed_decision(
+                self._confirmed,
+                potential_available=potential.available,
+                weather=weather,
+            )
         if self._candidate_status != raw_status:
             self._candidate_status = raw_status
             self._candidate_started_at = now
+        # Status stability is what the gate protects.  The candidate's
+        # explanation remains live, but it is kept separate from the
+        # confirmed explanation exposed as ``reason_codes``.
+        self._candidate_reason_codes = raw_reasons
+        self._candidate_humidity = humidity
+        self._candidate_thermal = thermal
         assert self._candidate_started_at is not None
         if now - self._candidate_started_at >= MINIMUM_STABLE_DURATION:
-            self._accepted_status = raw_status
-            self._candidate_status = None
-            self._candidate_started_at = None
-            return AdvisoryDecision(raw_status, raw_reasons, humidity, thermal, potential_available=True, weather=weather)
+            self._confirmed = _ConfirmedAssessment(raw_status, raw_reasons, humidity, thermal)
+            self._clear_candidate()
+            return self._confirmed_decision(
+                self._confirmed,
+                potential_available=potential.available,
+                weather=weather,
+            )
+        if self._confirmed is not None:
+            return self._confirmed_decision(
+                self._confirmed,
+                potential_available=potential.available,
+                weather=weather,
+                pending=True,
+            )
         return AdvisoryDecision(
             STATUS_UNAVAILABLE,
             ("awaiting_stable_assessment",),
             humidity,
             thermal,
             pending=True,
+            candidate_status=self._candidate_status,
+            candidate_reason_codes=self._candidate_reason_codes,
+            candidate_started_at=self._candidate_started_at,
+            candidate_humidity=self._candidate_humidity,
+            candidate_thermal=self._candidate_thermal,
             potential_available=potential.available,
             weather=weather,
         )

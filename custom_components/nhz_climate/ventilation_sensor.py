@@ -282,14 +282,11 @@ class VentilationDecisionSensor(VentilationEntity):
 
     @property
     def available(self) -> bool:
-        return bool(
-            self.context.snapshot
-            and self.context.snapshot.decision.status != "unavailable"
-        )
+        return bool(self.context.snapshot and self.context.snapshot.available)
 
     @property
     def native_value(self) -> str | None:
-        return self.context.snapshot.decision.status if self.available else None
+        return self.context.snapshot.status if self.available and self.context.snapshot else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

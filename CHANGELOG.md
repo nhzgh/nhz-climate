@@ -2,6 +2,20 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.10.1 - 2026-09-29
+
+- Keep the last confirmed ventilation recommendation available while a changed
+  assessment passes the 15-minute stability interval, instead of temporarily
+  exposing the entity as unavailable.
+- Expose the unconfirmed candidate, its reasons, component assessments, start
+  time and remaining stabilization time as separate diagnostic attributes.
+- Apply rain and strong-gust safety locks immediately. After a lock clears,
+  keep the effective `no` visible until the normal assessment is stable, and
+  expose whether the safety lock itself is currently active.
+- Continue to report genuine missing or invalid required inputs immediately as
+  unavailable when no independent safety lock decides the result; recovery
+  and integration startup both begin with a fresh stability interval.
+
 ## 0.10.0 - 2026-09-27
 
 - Judge unchanged local Home Assistant measurements by current entity
