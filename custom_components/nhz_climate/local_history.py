@@ -88,6 +88,7 @@ def normalize_hourly_statistics(
     start_utc: datetime,
     end_utc: datetime,
     variable: str,
+    statistic_type: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Return complete hourly values only, with explicit validation reasons.
 
@@ -106,7 +107,15 @@ def normalize_hourly_statistics(
     # Recorder exposes the reset-aware increment of a ``total_increasing``
     # entity as ``change``.  ``sum`` is a running cumulative statistic and is
     # not an hourly rainfall amount.
-    key = "mean" if variable == TEMPERATURE_VARIABLE else "change"
+    default_statistic = "mean" if variable == TEMPERATURE_VARIABLE else "change"
+    key = statistic_type or default_statistic
+    allowed_statistics = (
+        {"mean", "max"}
+        if variable == TEMPERATURE_VARIABLE
+        else {"change"}
+    )
+    if key not in allowed_statistics:
+        raise ValueError(f"unsupported {variable} hourly statistic: {key}")
     by_start: dict[datetime, float] = {}
     invalid: list[str] = []
     for item in statistics:
@@ -145,6 +154,7 @@ def local_segment(
     end_utc: datetime,
     variable: str,
     source_entity: str,
+    statistic_type: str | None = None,
 ) -> dict[str, Any]:
     """Build a safe local segment, or mark it unusable without inventing zero.
 
@@ -153,7 +163,10 @@ def local_segment(
     range, so the caller can retain the modelled fallback.
     """
     points, issues = normalize_hourly_statistics(
-        statistics, start_utc, end_utc, variable
+        statistics, start_utc, end_utc, variable, statistic_type
+    )
+    hourly_statistic = statistic_type or (
+        "mean" if variable == TEMPERATURE_VARIABLE else "change"
     )
     expected_hours = int((end_utc - start_utc).total_seconds() // 3600)
     complete = len(points) == expected_hours and not issues
@@ -162,6 +175,7 @@ def local_segment(
         "source_class": "local_observation",
         "source_entity": source_entity,
         "variable": variable,
+        "hourly_statistic": f"hourly_lts_{hourly_statistic}",
         "range_start_utc": start_utc.astimezone(timezone.utc).isoformat(),
         "range_end_utc": end_utc.astimezone(timezone.utc).isoformat(),
         "through_utc": end_utc.astimezone(timezone.utc).isoformat(),
@@ -326,4 +340,111 @@ def calendar_day_temperature_anomaly(
         "range_end_utc": end_utc.isoformat(),
         "actual_through_utc": completed_end.isoformat(),
         "semantics": "calendar_day_mean_ist_until_completed_hour_plus_forecast_remainder_minus_hourly_climatology_mean",
+    }
+
+
+def calendar_day_temperature_high(
+    *,
+    now: datetime,
+    site_timezone: str,
+    local_actual: dict[str, Any] | None,
+    hourly_forecast: Iterable[dict[str, Any]],
+    current_observation: float | None = None,
+) -> dict[str, Any]:
+    """Estimate today's high from completed IST hours and the forecast remainder.
+
+    The completed portion of the local calendar day uses Recorder's hourly
+    maximum, not an hourly mean.  The still-open hour and all later hours use
+    the hourly forecast.  When that forecast is absent,
+    when that active-hour forecast is absent, the configured outdoor sensor may
+    bridge *only* that one hour, just as it does for the daily-mean estimate.
+    A missing hour leaves the high unavailable: a partial curve must never be
+    advertised as a complete daily maximum.
+    """
+    if now.tzinfo is None:
+        raise ValueError("UTC-aware now required")
+    zone = ZoneInfo(site_timezone)
+    now_utc = now.astimezone(timezone.utc)
+    local_today = now_utc.astimezone(zone).date()
+    local_start = datetime.combine(local_today, datetime.min.time(), tzinfo=zone)
+    local_end = local_start + timedelta(days=1)
+    start_utc = local_start.astimezone(timezone.utc)
+    end_utc = local_end.astimezone(timezone.utc)
+    completed_end = min(last_completed_hour(now_utc, site_timezone), end_utc)
+
+    actual_by_start: dict[datetime, float] = {}
+    actual_has_hourly_max = (
+        isinstance(local_actual, dict)
+        and local_actual.get("hourly_statistic") == "hourly_lts_max"
+    )
+    if actual_has_hourly_max:
+        for point in local_actual.get("hourly", []):
+            if not isinstance(point, dict):
+                continue
+            start = _as_utc(point.get("start"))
+            value = _number(point.get("value"))
+            if start is not None and value is not None:
+                actual_by_start[start] = value
+
+    forecast_by_start: dict[datetime, float] = {}
+    for point in hourly_forecast:
+        if not isinstance(point, dict):
+            continue
+        start = _as_utc(point.get("datetime"))
+        value = _number(point.get("temperature"))
+        if start is not None and value is not None:
+            forecast_by_start[start] = value
+
+    expected_hours = int((end_utc - start_utc).total_seconds() // 3600)
+    actual_hours = 0
+    forecast_hours = 0
+    current_proxy_hours = 0
+    values: list[float] = []
+    missing: list[str] = []
+    if not actual_has_hourly_max and completed_end > start_utc:
+        missing.append("missing_hourly_lts_max")
+    notes: list[str] = []
+    cursor = start_utc
+    while cursor < end_utc:
+        if cursor < completed_end:
+            temperature = actual_by_start.get(cursor)
+            source = "hourly_lts_max"
+        else:
+            temperature = forecast_by_start.get(cursor)
+            source = "forecast"
+            if (
+                temperature is None
+                and cursor == completed_end
+                and current_observation is not None
+            ):
+                temperature = _number(current_observation)
+                source = "current_observation_proxy"
+                notes.append("current_hour_instantaneous_proxy")
+        if temperature is None:
+            missing.append(f"missing_{source}_hour")
+        else:
+            values.append(temperature)
+            if source == "hourly_lts_max":
+                actual_hours += 1
+            elif source == "current_observation_proxy":
+                current_proxy_hours += 1
+            else:
+                forecast_hours += 1
+        cursor += timedelta(hours=1)
+
+    complete = len(values) == expected_hours and not missing
+    return {
+        "value": max(values) if complete else None,
+        "expected_hours": expected_hours,
+        "covered_hours": len(values),
+        "actual_hours": actual_hours,
+        "forecast_hours": forecast_hours,
+        "current_proxy_hours": current_proxy_hours,
+        "complete": complete,
+        "quality_flags": sorted(set((*missing, *notes))),
+        "range_start_utc": start_utc.isoformat(),
+        "range_end_utc": end_utc.isoformat(),
+        "actual_through_utc": completed_end.isoformat(),
+        "actual_statistic": "hourly_lts_max",
+        "semantics": "calendar_day_max_hourly_lts_max_until_completed_hour_plus_hourly_forecast_remainder",
     }

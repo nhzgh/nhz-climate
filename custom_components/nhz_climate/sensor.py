@@ -395,14 +395,9 @@ class NhzClimateComparisonBase(CoordinatorEntity[NhzClimateCoordinator], SensorE
 
     @property
     def forecast_high(self) -> float | None:
-        profile_date = self.profile.get("date")
-        candidates = [
-            item.get("temperature")
-            for item in self.coordinator.data.get("daily_forecast", [])
-            if str(item.get("datetime", ""))[:10] == profile_date
-            and item.get("temperature") is not None
-        ]
-        return float(candidates[0]) if candidates else None
+        high = self.coordinator.data.get("temperature_calendar_day_high", {})
+        value = high.get("value") if isinstance(high, dict) else None
+        return float(value) if value is not None else None
 
     @property
     def normal_high(self) -> float | None:
@@ -528,6 +523,11 @@ class NhzClimateForecastHighSensor(NhzClimateComparisonBase):
     @property
     def native_value(self) -> float | None:
         return self.forecast_high
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        high = self.coordinator.data.get("temperature_calendar_day_high", {})
+        return high if isinstance(high, dict) else {}
 
 
 class NhzClimateVariableProfileSensor(

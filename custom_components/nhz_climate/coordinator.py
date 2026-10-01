@@ -36,6 +36,7 @@ from .local_history import (
     TEMPERATURE_VARIABLE,
     all_phase_precipitation_from_local_rain,
     calendar_day_temperature_anomaly,
+    calendar_day_temperature_high,
     last_completed_hour,
     local_segment,
     normalize_daily_references,
@@ -179,12 +180,24 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         variable: str,
         start_utc: datetime,
         end_utc: datetime,
+        *,
+        statistic_type: str | None = None,
     ) -> dict[str, Any] | None:
         """Read only complete local LTS buckets for one configured source."""
         source_entity = self._local_source_entity(variable)
         if not source_entity:
             return None
-        statistic_type = "mean" if variable == TEMPERATURE_VARIABLE else "change"
+        default_statistic = "mean" if variable == TEMPERATURE_VARIABLE else "change"
+        requested_statistic = statistic_type or default_statistic
+        allowed_statistics = (
+            {"mean", "max"}
+            if variable == TEMPERATURE_VARIABLE
+            else {"change"}
+        )
+        if requested_statistic not in allowed_statistics:
+            raise ValueError(
+                f"unsupported {variable} local statistic: {requested_statistic}"
+            )
         try:
             result = await get_instance(self.hass).async_add_executor_job(
                 statistics_during_period,
@@ -194,7 +207,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 {source_entity},
                 "hour",
                 None,
-                {statistic_type},
+                {requested_statistic},
             )
         except Exception:  # Recorder unavailability must retain API fallback.
             return None
@@ -204,6 +217,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             end_utc,
             variable,
             source_entity,
+            requested_statistic,
         )
 
     @staticmethod
@@ -762,7 +776,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def _async_current_day_temperature_actual(
-        self, site_timezone: str,
+        self, site_timezone: str, *, statistic_type: str = "mean",
     ) -> dict[str, Any] | None:
         """Return complete recorded hours from this local midnight onward."""
         end_utc = last_completed_hour(datetime.now(timezone.utc), site_timezone)
@@ -777,9 +791,13 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "complete": True,
                 "coverage_ratio": 1.0,
                 "source_entity": self._local_source_entity(TEMPERATURE_VARIABLE),
+                "hourly_statistic": f"hourly_lts_{statistic_type}",
             }
         return await self._async_local_statistics(
-            TEMPERATURE_VARIABLE, start_utc, end_utc
+            TEMPERATURE_VARIABLE,
+            start_utc,
+            end_utc,
+            statistic_type=statistic_type,
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -875,6 +893,9 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._async_recent_local_actual(TEMPERATURE_VARIABLE, site_timezone),
                 self._async_recent_local_actual(RAIN_VARIABLE, site_timezone),
                 self._async_current_day_temperature_actual(site_timezone),
+                self._async_current_day_temperature_actual(
+                    site_timezone, statistic_type="max"
+                ),
             )
             latest["local_hourly_actual"] = {
                 variable: segment
@@ -882,6 +903,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if segment is not None
             }
             current_day_temperature = recent_local[2]
+            current_day_temperature_max = recent_local[3]
             current_temperature: float | None = None
             current_temperature_state = self.hass.states.get(
                 self._local_source_entity(TEMPERATURE_VARIABLE)
@@ -902,11 +924,19 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         current_temperature = raw_temperature - 273.15
                 except (TypeError, ValueError):
                     current_temperature = None
+            calculation_now = datetime.now(timezone.utc)
             latest["temperature_calendar_day_anomaly"] = calendar_day_temperature_anomaly(
-                now=datetime.now(timezone.utc),
+                now=calculation_now,
                 site_timezone=site_timezone,
                 hourly_normal=profile.get("hourly", []),
                 local_actual=current_day_temperature,
+                hourly_forecast=latest["hourly_forecast"],
+                current_observation=current_temperature,
+            )
+            latest["temperature_calendar_day_high"] = calendar_day_temperature_high(
+                now=calculation_now,
+                site_timezone=site_timezone,
+                local_actual=current_day_temperature_max,
                 hourly_forecast=latest["hourly_forecast"],
                 current_observation=current_temperature,
             )

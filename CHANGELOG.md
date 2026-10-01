@@ -2,6 +2,14 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.10.2 - 2026-10-01
+
+- Calculate today's high temperature over the complete local calendar day:
+  completed local hourly LTS maxima plus the remaining hourly forecast.
+- Keep the high unavailable when either segment has an uncovered hour and
+  expose coverage, source counts, time bounds and calculation semantics as
+  diagnostic attributes.
+
 ## 0.10.1 - 2026-09-29
 
 - Keep the last confirmed ventilation recommendation available while a changed
