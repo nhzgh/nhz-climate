@@ -33,6 +33,7 @@ from .ventilation_advisory import (
     VentilationAdvisory,
     WeatherSafetyInputs,
 )
+from .ventilation_projection import VentilationProjection, project_standard_room
 
 
 Quantity = Literal[
@@ -162,6 +163,10 @@ class ZoneRuntimeInputs:
     indoor_temperature: EntityStateInput
     indoor_relative_humidity: EntityStateInput
     outdoor: OutdoorRuntimeInputs
+    # Home Assistant weather.get_forecasts payload, already acquired by the
+    # entry coordinator.  It is optional because the live advisory itself
+    # must remain independent of forecast availability.
+    hourly_forecast: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -174,6 +179,7 @@ class VentilationRuntimeSnapshot:
     potential: VentilationEvaluation
     decision: AdvisoryDecision
     station_health: StationHealth
+    projection: VentilationProjection | None = None
     provenance: dict[str, SourceProvenance] = field(default_factory=dict)
     error_codes: tuple[str, ...] = ()
     candidate_remaining_seconds: int | None = None
@@ -247,6 +253,12 @@ class VentilationRuntimeSnapshot:
             "temperature_humidity_skew_seconds": dict(self.potential.temperature_humidity_skew_seconds),
             "station_health": self.station_health.as_dict(),
             "source_provenance": {name: item.as_dict() for name, item in self.provenance.items()},
+            "ventilation_projection": (
+                self.projection.as_dict() if self.projection is not None else {
+                    "available": False,
+                    "quality_flags": ["projection_not_calculated"],
+                }
+            ),
         }
 
 
@@ -579,6 +591,15 @@ class VentilationZoneRuntime:
             now=evaluated_at,
             policy=self._freshness_policy,
         )
+        projection = project_standard_room(
+            now=evaluated_at,
+            indoor=potential.potential.indoor if potential.potential else None,
+            outdoor=potential.potential.outdoor if potential.potential else None,
+            pressure_pa=(
+                potential.potential.indoor.pressure_pa if potential.potential else None
+            ),
+            hourly_forecast=inputs.hourly_forecast,
+        )
 
         rain_rate, rain_errors = _safe_weather_value(
             normalized["rain_rate"],
@@ -635,6 +656,7 @@ class VentilationZoneRuntime:
             potential=potential,
             decision=decision,
             station_health=station,
+            projection=projection,
             provenance={name: item.provenance for name, item in normalized.items()},
             error_codes=tuple(dict.fromkeys(errors)),
             candidate_remaining_seconds=candidate_remaining_seconds,

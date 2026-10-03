@@ -831,6 +831,11 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             latest["daily_profiles_all"] = daily_profiles_all
             latest["seven_day_profiles"] = seven_day_profiles
             latest["seven_day_profiles_all"] = seven_day_profiles_all
+            # The merged series deliberately preserves already-past points
+            # for the calendar-day climate curve. Keep this refresh's raw
+            # response separately: forward-looking ventilation projections
+            # must never treat a stale retained future point as fresh.
+            latest["hourly_forecast_current_refresh"] = hourly
             latest["hourly_forecast"] = self._merge_hourly_forecast(hourly)
             latest["daily_forecast"] = daily
             latest["forecast_entity"] = self.forecast_entity

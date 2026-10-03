@@ -43,6 +43,7 @@ from .ventilation_runtime import (
     VentilationZoneRuntime,
     ZoneRuntimeInputs,
 )
+from .ventilation_projection import current_refresh_hourly_forecast
 
 PILOT_HEARTBEAT = timedelta(minutes=5)
 PILOT_STORE_VERSION = 1
@@ -72,6 +73,7 @@ class VentilationZoneContext:
         self.snapshot: VentilationRuntimeSnapshot | None = None
         self._listeners: list[Callable[[], None]] = []
         self._unsubscribers: list[Callable[[], None]] = []
+        self._coordinator_unsub: Callable[[], None] | None = None
         self._debounce_unsub: Callable[[], None] | None = None
         self._started = False
         self._start_lock = asyncio.Lock()
@@ -130,6 +132,12 @@ class VentilationZoneContext:
                     PILOT_HEARTBEAT,
                 )
             )
+            coordinator = getattr(self.entry, "runtime_data", None)
+            add_coordinator_listener = getattr(coordinator, "async_add_listener", None)
+            if callable(add_coordinator_listener):
+                self._coordinator_unsub = add_coordinator_listener(
+                    self._coordinator_updated
+                )
             self._started = True
             await self.async_evaluate(dt_util.utcnow())
 
@@ -139,6 +147,9 @@ class VentilationZoneContext:
         if self._debounce_unsub is not None:
             self._debounce_unsub()
             self._debounce_unsub = None
+        if self._coordinator_unsub is not None:
+            self._coordinator_unsub()
+            self._coordinator_unsub = None
         while self._unsubscribers:
             self._unsubscribers.pop()()
         self._started = False
@@ -159,6 +170,23 @@ class VentilationZoneContext:
     @callback
     def _heartbeat(self, now: datetime) -> None:
         self.hass.async_create_task(self.async_evaluate(now))
+
+    @callback
+    def _coordinator_updated(self) -> None:
+        """Refresh projections when the already-loaded weather forecast changes."""
+        if self._started:
+            self.hass.async_create_task(self.async_evaluate(dt_util.utcnow()))
+
+    def _hourly_forecast(self) -> tuple[dict[str, Any], ...]:
+        coordinator = getattr(self.entry, "runtime_data", None)
+        data = getattr(coordinator, "data", None)
+        return current_refresh_hourly_forecast(data)
+
+    @property
+    def forecast_entity(self) -> str | None:
+        coordinator = getattr(self.entry, "runtime_data", None)
+        value = getattr(coordinator, "forecast_entity", None)
+        return str(value) if value else None
 
     def _state_input(
         self,
@@ -207,6 +235,7 @@ class VentilationZoneContext:
                 str(self.subentry.data.get(CONF_INDOOR_HUMIDITY_ENTITY, ""))
             ),
             outdoor=outdoor,
+            hourly_forecast=self._hourly_forecast(),
         )
 
     async def async_evaluate(self, now: datetime) -> None:
@@ -298,6 +327,7 @@ class VentilationDecisionSensor(VentilationEntity):
             "advisory_only": True,
             "working_values": True,
             "reference_airflow_m3_per_h": 1.0,
+            "forecast_source_entity": self.context.forecast_entity,
         }
 
 

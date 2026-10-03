@@ -2,6 +2,24 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.10.3 - 2026-10-03
+
+- Add compact, per-zone ventilation projection attributes for the current
+  room climate plus one and eight hours. They use the agreed standard room
+  (60 m³), reference air flow (100 m³/h), 22 °C / 50 % rF targets and an
+  explicit 8-hour thermal working time constant.
+- Calculate moisture with ideal outdoor-air mixing and relative humidity at
+  the simultaneously projected room temperature. Publish the separate
+  air-only limit alongside the thermally buffered working result.
+- Use the current local outdoor observation through the current hour, then
+  step through the already-loaded hourly weather forecast. A one-hour result
+  can explicitly fall back to the current observation; eight hours stays
+  incomplete when a forecast interval is absent. The advisory and weather
+  safety locks are unchanged.
+- Keep the current raw weather response separate from the intentionally
+  merged same-day climate curve, so a failed refresh cannot leave an old
+  future forecast looking valid for an eight-hour ventilation projection.
+
 ## 0.10.2 - 2026-10-01
 
 - Calculate today's high temperature over the complete local calendar day:

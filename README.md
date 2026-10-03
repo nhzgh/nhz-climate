@@ -49,6 +49,15 @@ reports that release as its latest version.
   `optional`. `optional` means that ventilation is climatically neutral and
   may be used for another purpose such as CO2 reduction; it does not imply a
   CO2 measurement.
+- The window-open sensor additionally exposes compact room-climate and
+  one-/eight-hour projection attributes for the card: fixed initial working
+  values are 60 m³ room volume, 100 m³/h air flow, 22 °C / 50 % rF targets and
+  an 8-hour thermal time constant. The current outdoor observation supplies
+  the first (possibly partial) hour; later intervals use the coordinator's
+  hourly weather forecast. The 8-hour projection remains incomplete rather
+  than repeating a current observation when forecast coverage is missing;
+  it uses only the current weather-service response, not older points kept
+  for same-day climate charts.
 - Newly added or changed ventilation zones and surfaces become active without
   a manual integration reload.
 
