@@ -2,6 +2,36 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.10.4 - 2026-10-06
+
+- Refine the advisory-only window recommendation using an exact standard-room
+  trajectory at 15-minute endpoints through eight hours. The model retains
+  the published working values: 60 m³, 100 m³/h and an 8-hour thermal time
+  constant.
+- Recommend ventilation only when normalised distance to 22 °C / 50 % rF
+  improves by at least 5 %. Temperature is scaled by 2 K and relative
+  humidity by 10 percentage points, matching the half-width of the accepted
+  20–24 °C / 40–60 % rF corridor.
+- Do not newly cross a comfort boundary or worsen a dimension which is
+  already outside that corridor. Keep the absolute-humidity direction as a
+  physical moisture gate, independent of the relative-humidity display.
+- Treat the trajectory as one continuous path: after either dimension reaches
+  its corridor it may not leave it again, and any non-floating-point increase
+  after the best normalised target distance ends the useful duration. Thus a
+  later recovery never turns an earlier unsafe or worsening segment into an
+  overnight recommendation.
+- Publish the versioned `duration_target_v1` contract with trajectory,
+  15/30/60-minute and 8-hour summaries, action, recommended duration,
+  target distances, improvement and limiting reason.
+- Map duration-aware actions compatibly: `short_airing`, `ventilate` and
+  `overnight` publish legacy state `ja`; `avoid` publishes `nein`; and
+  `optional` remains `optional`. The refined result enters the existing
+  15-minute stability gate before any state is published. Rain and gust
+  safety locks continue to override every climate recommendation.
+- When the fresh hourly forecast is incomplete, permit only an explicitly
+  marked short recommendation from the covered near-term interval; never
+  make a one-hour or overnight recommendation from repeated current weather.
+
 ## 0.10.3 - 2026-10-03
 
 - Add compact, per-zone ventilation projection attributes for the current

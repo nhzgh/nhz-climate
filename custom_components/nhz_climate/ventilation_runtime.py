@@ -198,6 +198,8 @@ class VentilationRuntimeSnapshot:
 
     def as_attributes(self) -> dict[str, object]:
         """Return plain JSON-compatible diagnostic attributes for HA entities."""
+        duration = self.decision.duration_recommendation
+        candidate_duration = self.decision.candidate_duration_recommendation
         return {
             "zone_id": self.zone_id,
             "zone_name": self.zone_name,
@@ -233,6 +235,14 @@ class VentilationRuntimeSnapshot:
                 if self.decision.candidate_thermal
                 else []
             ),
+            "candidate_recommended_action": (
+                candidate_duration.action if candidate_duration else None
+            ),
+            "candidate_recommended_duration_minutes": (
+                candidate_duration.recommended_duration_minutes
+                if candidate_duration
+                else None
+            ),
             "safety_lock_active": bool(
                 self.decision.weather and self.decision.weather.locked
             ),
@@ -246,6 +256,33 @@ class VentilationRuntimeSnapshot:
             "humidity_reason_codes": list(self.decision.humidity.reason_codes),
             "thermal_effect": self.decision.thermal.effect,
             "thermal_reason_codes": list(self.decision.thermal.reason_codes),
+            # Stable top-level contract for automations and native cards.  The
+            # complete versioned object is retained inside ventilation_projection
+            # for diagnostics and future model revisions.
+            "recommendation_contract_version": (
+                "duration_target_v1" if duration else None
+            ),
+            "recommended_action": duration.action if duration else None,
+            "recommended_duration_minutes": (
+                duration.recommended_duration_minutes if duration else None
+            ),
+            "optimal_duration_minutes": (
+                duration.optimal_duration_minutes if duration else None
+            ),
+            "limiting_factor": duration.limiting_factor if duration else None,
+            "target_distance_before": (
+                duration.target_distance_before if duration else None
+            ),
+            "target_distance_after": (
+                duration.target_distance_after if duration else None
+            ),
+            "target_improvement_percent": (
+                duration.target_improvement_percent if duration else None
+            ),
+            "trajectory_complete_through_minutes": (
+                duration.complete_through_minutes if duration else 0
+            ),
+            "duration_reason_codes": list(duration.reason_codes) if duration else [],
             "error_codes": list(self.error_codes),
             "potential_quality_flags": list(self.potential.quality_flags),
             "source_quality": self.potential.source_quality,
@@ -628,7 +665,15 @@ class VentilationZoneRuntime:
             rain_counter_mm=counter,
             gust_kmh=gust,
         )
-        decision = self._advisory.evaluate(potential, weather, now=evaluated_at)
+        # The duration model is deliberately refined *before* the advisory's
+        # 15-minute stability gate.  A raw instantaneous `ja` must therefore
+        # not leak out while its target-aware duration model says `avoid`.
+        decision = self._advisory.evaluate(
+            potential,
+            weather,
+            now=evaluated_at,
+            duration_recommendation=projection.recommendation,
+        )
 
         candidate_remaining_seconds: int | None = None
         if decision.pending and decision.candidate_started_at is not None:

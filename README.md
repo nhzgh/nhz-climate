@@ -50,14 +50,22 @@ reports that release as its latest version.
   may be used for another purpose such as CO2 reduction; it does not imply a
   CO2 measurement.
 - The window-open sensor additionally exposes compact room-climate and
-  one-/eight-hour projection attributes for the card: fixed initial working
-  values are 60 m³ room volume, 100 m³/h air flow, 22 °C / 50 % rF targets and
-  an 8-hour thermal time constant. The current outdoor observation supplies
-  the first (possibly partial) hour; later intervals use the coordinator's
-  hourly weather forecast. The 8-hour projection remains incomplete rather
-  than repeating a current observation when forecast coverage is missing;
-  it uses only the current weather-service response, not older points kept
-  for same-day climate charts.
+  one-/eight-hour projection attributes for the card, plus a duration-aware
+  `duration_target_v1` recommendation. It evaluates exact 15-minute endpoints
+  through eight hours using fixed initial working values: 60 m³ room volume,
+  100 m³/h air flow, 22 °C / 50 % rF targets and an 8-hour thermal time
+  constant. A positive recommendation must improve the normalised target
+  distance by at least 5 % without newly leaving the 20–24 °C / 40–60 % rF
+  corridor or worsening an already failed dimension. The path stops at the
+  first recovered-corridor exit or non-floating-point reversal away from its
+  best target distance; it cannot re-enter after a later recovery.
+  `short_airing`,
+  `ventilate` and `overnight` map compatibly to `ja`; their action and duration
+  remain explicit attributes. The current outdoor observation supplies the
+  first (possibly partial) hour; later intervals use the coordinator's hourly
+  weather forecast. An incomplete fresh forecast can make only an explicitly
+  marked short recommendation, never a one-hour or overnight one; older
+  same-day chart points are never reused as future weather.
 - Newly added or changed ventilation zones and surfaces become active without
   a manual integration reload.
 

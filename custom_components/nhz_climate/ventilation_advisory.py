@@ -9,12 +9,13 @@ documented *Arbeitswerte* for the SL pilot, not comfort or safety guarantees.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from math import isfinite
 from typing import Iterable
 
 from .ventilation import VentilationEvaluation
+from .ventilation_projection import DurationRecommendation
 
 
 STATUS_YES = "ja"
@@ -109,6 +110,8 @@ class AdvisoryDecision:
     candidate_thermal: PartAssessment | None = None
     potential_available: bool = False
     weather: WeatherSafetyResult | None = None
+    duration_recommendation: DurationRecommendation | None = None
+    candidate_duration_recommendation: DurationRecommendation | None = None
 
 
 @dataclass(frozen=True)
@@ -268,6 +271,69 @@ def combine_assessments(humidity: PartAssessment, thermal: PartAssessment) -> tu
     return status, tuple(dict.fromkeys(reasons))
 
 
+def refine_with_duration(
+    base_status: str,
+    base_reasons: tuple[str, ...],
+    recommendation: DurationRecommendation | None,
+) -> tuple[str, tuple[str, ...]]:
+    """Map duration-aware target progress to legacy HA-compatible states.
+
+    ``ja`` now means a time-bounded action exists: `short_airing`,
+    `ventilate` and `overnight` all map to it for existing automations.  The
+    action and exact duration are attributes.  `avoid` maps to `nein` and
+    `optional` keeps its established meaning.  A missing duration model can
+    never preserve a previously raw positive recommendation.
+    """
+    if recommendation is None:
+        return base_status, base_reasons
+    action = recommendation.action
+    reasons = tuple(dict.fromkeys((*base_reasons, *recommendation.reason_codes)))
+    if action == "unavailable":
+        if base_status == STATUS_YES:
+            return STATUS_AMBIVALENT, tuple(dict.fromkeys((*reasons, "duration_model_unavailable")))
+        return base_status, reasons
+    if action == "avoid":
+        return STATUS_NO, tuple(dict.fromkeys((*reasons, "duration_target_avoid")))
+    if action == "optional":
+        return STATUS_OPTIONAL, tuple(dict.fromkeys((*reasons, "duration_target_optional")))
+    if action in {"short_airing", "ventilate", "overnight"}:
+        # The standard-room trajectory includes physical absolute-humidity
+        # gatekeeping.  It is therefore the more specific, duration-aware
+        # answer than the old instantaneous conflict matrix.
+        return STATUS_YES, tuple(dict.fromkeys((*reasons, "duration_target_benefit")))
+    return STATUS_AMBIVALENT, tuple(dict.fromkeys((*reasons, "duration_action_invalid")))
+
+
+def _weather_limited_duration(
+    recommendation: DurationRecommendation | None,
+    weather: WeatherSafetyResult,
+) -> DurationRecommendation | None:
+    """Keep a displayed duration action consistent with safety precedence."""
+    if recommendation is None:
+        return None
+    if weather.locked:
+        return replace(
+            recommendation,
+            action="avoid",
+            recommended_duration_minutes=None,
+            limiting_factor="weather_safety",
+            reason_codes=tuple(
+                dict.fromkeys((*recommendation.reason_codes, *weather.reason_codes, "safety_lock"))
+            ),
+        )
+    if not weather.available:
+        return replace(
+            recommendation,
+            action="unavailable",
+            recommended_duration_minutes=None,
+            limiting_factor="weather_source_unavailable",
+            reason_codes=tuple(
+                dict.fromkeys((*recommendation.reason_codes, *weather.reason_codes))
+            ),
+        )
+    return recommendation
+
+
 class _WeatherGate:
     """Preserve rain/gust interlock history; it is internal policy state."""
 
@@ -387,6 +453,7 @@ class _ConfirmedAssessment:
     reason_codes: tuple[str, ...]
     humidity: PartAssessment
     thermal: PartAssessment
+    duration_recommendation: DurationRecommendation | None = None
 
 
 class VentilationAdvisory:
@@ -399,6 +466,8 @@ class VentilationAdvisory:
         self._candidate_started_at: datetime | None = None
         self._candidate_humidity: PartAssessment | None = None
         self._candidate_thermal: PartAssessment | None = None
+        self._candidate_duration_recommendation: DurationRecommendation | None = None
+        self._candidate_key: tuple[object, ...] | None = None
         self._confirmed: _ConfirmedAssessment | None = None
 
     def evaluate(
@@ -407,13 +476,20 @@ class VentilationAdvisory:
         weather: WeatherSafetyInputs,
         *,
         now: datetime,
+        duration_recommendation: DurationRecommendation | None = None,
     ) -> AdvisoryDecision:
         """Return an advisory; safety locks are immediate, all else is gated."""
         now = _utc(now)
         humidity = evaluate_humidity(potential)
         thermal = evaluate_thermal(potential)
         weather_result = self._weather.evaluate(weather, now=now)
+        duration_recommendation = _weather_limited_duration(
+            duration_recommendation, weather_result
+        )
         raw_status, raw_reasons = combine_assessments(humidity, thermal)
+        raw_status, raw_reasons = refine_with_duration(
+            raw_status, raw_reasons, duration_recommendation
+        )
 
         if weather_result.locked:
             # Safety locks take effect immediately and therefore become the
@@ -425,6 +501,7 @@ class VentilationAdvisory:
                 tuple(dict.fromkeys((*weather_result.reason_codes, "safety_lock"))),
                 humidity,
                 thermal,
+                duration_recommendation,
             )
             self._confirmed = safety
             self._clear_candidate()
@@ -447,6 +524,7 @@ class VentilationAdvisory:
                 thermal,
                 potential_available=potential.available,
                 weather=weather_result,
+                duration_recommendation=duration_recommendation,
             )
 
         return self._stabilize(
@@ -457,6 +535,7 @@ class VentilationAdvisory:
             potential,
             weather_result,
             now,
+            duration_recommendation,
         )
 
     def _reset_stabilization(self) -> None:
@@ -465,6 +544,8 @@ class VentilationAdvisory:
         self._candidate_started_at = None
         self._candidate_humidity = None
         self._candidate_thermal = None
+        self._candidate_duration_recommendation = None
+        self._candidate_key = None
         self._confirmed = None
 
     def _clear_candidate(self) -> None:
@@ -473,6 +554,23 @@ class VentilationAdvisory:
         self._candidate_started_at = None
         self._candidate_humidity = None
         self._candidate_thermal = None
+        self._candidate_duration_recommendation = None
+        self._candidate_key = None
+
+    @staticmethod
+    def _recommendation_key(
+        status: str, recommendation: DurationRecommendation | None
+    ) -> tuple[object, ...]:
+        if recommendation is None:
+            return (status, None)
+        return (
+            status,
+            recommendation.action,
+            # Duration is rounded to this integration's 15-minute trajectory
+            # grid. A changed duration is a changed recommendation and must
+            # earn the same stability interval as a changed status/action.
+            recommendation.recommended_duration_minutes,
+        )
 
     def _confirmed_decision(
         self,
@@ -501,6 +599,10 @@ class VentilationAdvisory:
             candidate_thermal=self._candidate_thermal if pending else None,
             potential_available=potential_available,
             weather=weather,
+            duration_recommendation=confirmed.duration_recommendation,
+            candidate_duration_recommendation=(
+                self._candidate_duration_recommendation if pending else None
+            ),
         )
 
     def _stabilize(
@@ -512,30 +614,45 @@ class VentilationAdvisory:
         potential: VentilationEvaluation,
         weather: WeatherSafetyResult,
         now: datetime,
+        duration_recommendation: DurationRecommendation | None,
     ) -> AdvisoryDecision:
-        if self._confirmed is not None and self._confirmed.status == raw_status:
+        current_key = self._recommendation_key(raw_status, duration_recommendation)
+        confirmed_key = (
+            self._recommendation_key(
+                self._confirmed.status, self._confirmed.duration_recommendation
+            )
+            if self._confirmed is not None
+            else None
+        )
+        if self._confirmed is not None and confirmed_key == current_key:
             # A status which is already confirmed needs no new gate.  Refresh
             # its explanation and component assessments from the live inputs,
             # then cancel any incomplete replacement candidate.
-            self._confirmed = _ConfirmedAssessment(raw_status, raw_reasons, humidity, thermal)
+            self._confirmed = _ConfirmedAssessment(
+                raw_status, raw_reasons, humidity, thermal, duration_recommendation
+            )
             self._clear_candidate()
             return self._confirmed_decision(
                 self._confirmed,
                 potential_available=potential.available,
                 weather=weather,
             )
-        if self._candidate_status != raw_status:
+        if self._candidate_key != current_key:
             self._candidate_status = raw_status
             self._candidate_started_at = now
+            self._candidate_key = current_key
         # Status stability is what the gate protects.  The candidate's
         # explanation remains live, but it is kept separate from the
         # confirmed explanation exposed as ``reason_codes``.
         self._candidate_reason_codes = raw_reasons
         self._candidate_humidity = humidity
         self._candidate_thermal = thermal
+        self._candidate_duration_recommendation = duration_recommendation
         assert self._candidate_started_at is not None
         if now - self._candidate_started_at >= MINIMUM_STABLE_DURATION:
-            self._confirmed = _ConfirmedAssessment(raw_status, raw_reasons, humidity, thermal)
+            self._confirmed = _ConfirmedAssessment(
+                raw_status, raw_reasons, humidity, thermal, duration_recommendation
+            )
             self._clear_candidate()
             return self._confirmed_decision(
                 self._confirmed,
@@ -562,6 +679,8 @@ class VentilationAdvisory:
             candidate_thermal=self._candidate_thermal,
             potential_available=potential.available,
             weather=weather,
+            duration_recommendation=None,
+            candidate_duration_recommendation=self._candidate_duration_recommendation,
         )
 
 
