@@ -2,6 +2,13 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.10.5 - 2026-10-06
+
+- Restrict `optional` in `duration_target_v1` to climate-neutral, non-harmful
+  trajectories. A room that starts inside the broad comfort corridor but
+  moves away from its 22 °C / 50 % rF target or crosses a corridor boundary
+  now publishes `avoid` with no suggested opening duration.
+
 ## 0.10.4 - 2026-10-06
 
 - Refine the advisory-only window recommendation using an exact standard-room

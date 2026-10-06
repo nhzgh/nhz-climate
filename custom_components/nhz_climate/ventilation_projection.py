@@ -659,10 +659,17 @@ def _duration_recommendation(
 
     if not valid:
         in_corridor = _within_acceptance(before_temperature, before_humidity)
-        action = "optional" if in_corridor else "avoid"
         limiting = limiting or (
             "forecast_incomplete" if complete_through == 0 else "target_distance"
         )
+        # `optional` means climate-neutral and non-harmful, not merely that
+        # the current reading happens to be inside the broad comfort corridor.
+        # A path that immediately moves away from target or exits a recovered
+        # corridor must be a clear `avoid` with no suggested opening duration.
+        harmful_path = limiting == "target_distance_reverses" or limiting.endswith(
+            "_corridor"
+        ) or limiting.startswith("absolute_humidity")
+        action = "optional" if in_corridor and not harmful_path else "avoid"
         reason = (
             "climate_neutral_ventilation_optional"
             if action == "optional"

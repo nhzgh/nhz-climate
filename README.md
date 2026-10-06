@@ -61,7 +61,9 @@ reports that release as its latest version.
   best target distance; it cannot re-enter after a later recovery.
   `short_airing`,
   `ventilate` and `overnight` map compatibly to `ja`; their action and duration
-  remain explicit attributes. The current outdoor observation supplies the
+  remain explicit attributes. `optional` is reserved for non-harmful,
+  climate-neutral paths; an initially acceptable room that moves away from
+  the target or leaves its corridor publishes `avoid` instead. The current outdoor observation supplies the
   first (possibly partial) hour; later intervals use the coordinator's hourly
   weather forecast. An incomplete fresh forecast can make only an explicitly
   marked short recommendation, never a one-hour or overnight one; older
