@@ -18,10 +18,6 @@ from .const import (
     CONF_DATASET,
     CONF_FORECAST_ENTITY,
     CONF_PROVIDER_UPDATE_MINUTES,
-    LOCAL_SOURCE_BY_VARIABLE,
-    MONTHLY_COMPARISON_WINDOWS,
-    PRIMARY_BASELINE,
-    SECONDARY_BASELINE,
     CONF_SITE,
     CONF_VARIABLES,
     DEFAULT_DATASET,
@@ -29,7 +25,11 @@ from .const import (
     DEFAULT_PROVIDER_UPDATE_MINUTES,
     DEFAULT_VARIABLES,
     DOMAIN,
+    LOCAL_SOURCE_BY_VARIABLE,
+    MONTHLY_COMPARISON_WINDOWS,
+    PRIMARY_BASELINE,
     PROFILE_ENTITIES,
+    SECONDARY_BASELINE,
 )
 from .local_history import (
     RAIN_VARIABLE,
@@ -134,6 +134,15 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return await self.api.temperature_profile(self.site, self.dataset, baseline)
         except NhzClimateDataUnavailableError:
             return {}
+
+    async def _async_soil(self) -> dict[str, Any]:
+        try:
+            return await self.api.soil(self.site)
+        except NhzClimateError:
+            # Entities still exist (notably explicit H240 deep unavailable),
+            # but an absent/independently failing optional soil product must
+            # not fail all established climate entities.
+            return {"site": self.site, "zones": []}
 
     async def _async_profiles(self, baseline: str) -> dict[str, Any]:
         try:
@@ -804,7 +813,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             (
                 latest, profile, profile_all, profiles, profiles_all,
-                daily_profiles, daily_profiles_all,
+                daily_profiles, daily_profiles_all, soil,
                 seven_day_profiles, seven_day_profiles_all, hourly, daily,
                 *comparison_responses,
             ) = await asyncio.gather(
@@ -815,6 +824,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._async_profiles(SECONDARY_BASELINE),
                 self._async_daily_profiles(PRIMARY_BASELINE),
                 self._async_daily_profiles(SECONDARY_BASELINE),
+                self._async_soil(),
                 self._async_daily_profiles(PRIMARY_BASELINE, window_days=7),
                 self._async_daily_profiles(SECONDARY_BASELINE, window_days=7),
                 self._async_forecast("hourly"),
@@ -829,6 +839,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             latest["profiles_all"] = profiles_all
             latest["daily_profiles"] = daily_profiles
             latest["daily_profiles_all"] = daily_profiles_all
+            latest["soil"] = soil
             latest["seven_day_profiles"] = seven_day_profiles
             latest["seven_day_profiles_all"] = seven_day_profiles_all
             # The merged series deliberately preserves already-past points

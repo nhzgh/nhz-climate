@@ -17,6 +17,7 @@ from .const import (
     SUBENTRY_TYPE_VENTILATION_ZONE,
 )
 from .coordinator import NhzClimateConfigEntry, NhzClimateCoordinator
+from .soil_sensor import build_soil_entities
 from .surface_sensor import build_surface_entities
 from .ventilation_sensor import build_ventilation_zone_entities
 
@@ -271,6 +272,7 @@ async def async_setup_entry(
         NhzClimateMonthlyComparisonSensor(coordinator, variable)
         for variable in ("rain", "snowfall", "precipitation")
     )
+    entities.extend(build_soil_entities(coordinator))
     async_add_entities(entities)
 
     # Ventilation zones share the existing entry and therefore the same

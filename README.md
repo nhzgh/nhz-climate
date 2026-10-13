@@ -29,6 +29,18 @@ runs HACS validation, creates the GitHub release and verifies that it is
 published on the exact approved commit supplied to the workflow. Site rollout starts only after HACS
 reports that release as its latest version.
 
+## 0.11 feature scope
+
+- Compact native soil-temperature and soil-moisture entities for the fixed
+  upper, main and deep root zones, including a separate source-model sensor.
+- Every soil entity keeps the native point/layer depth, unit, model run,
+  validity interval and coverage provenance without copying hourly arrays into
+  Home Assistant state attributes.
+- The fixed site policy uses ICON-EU for SL upper/main, ICON-2I for SL deep,
+  ICON-D2 for H240 upper/main, and exposes H240 deep explicitly as unavailable.
+- Soil data is an optional API product: a temporary soil-endpoint failure does
+  not make the established climate and ventilation entities unavailable.
+
 ## 0.10 feature scope
 
 - ERA5 climate profiles for 1970–2025 and the full available history.

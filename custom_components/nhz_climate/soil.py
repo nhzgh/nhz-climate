@@ -1,25 +1,50 @@
-"""Native soil-series contracts and the provisional source selector.
+"""Native soil-series contracts and the fixed site/zone source selector.
 
 This module deliberately does not create root-zone values.  A soil value is
 only useful when its provider variable and native point/layer depth remain
-visible.  ``best_available`` is a convenience view over compatible native
-series, never an interpolation or a replacement for a missing layer.
+visible.  The S11 convenience view selects one complete model run for both
+temperature and moisture in a site/zone.  It never switches source by hour,
+interpolates a depth, or replaces a missing layer.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from math import isfinite
 from typing import Literal
 
-
 Availability = Literal["available", "unavailable"]
 DepthSemantics = Literal["point", "layer"]
+SoilZone = Literal["upper_root_zone", "main_root_zone", "deep_root_zone"]
 
 ICON_2I_MODEL_KEY = "italia_meteo_arpae_icon_2i"
 ICON_EU_MODEL_KEY = "icon_eu"
-BEST_AVAILABLE_ALGORITHM_VERSION = "native-soil-best-available-v1"
+ICON_D2_MODEL_KEY = "icon_d2"
+BEST_AVAILABLE_ALGORITHM_VERSION = "native-soil-fixed-zone-v2"
+SOIL_QUANTITIES = frozenset({"soil_temperature", "soil_moisture"})
+SOIL_ZONES: tuple[SoilZone, ...] = (
+    "upper_root_zone",
+    "main_root_zone",
+    "deep_root_zone",
+)
+
+# D-023 is deliberately data, not an ordered fallback list.  A missing fixed
+# source remains unavailable until an explicit complete-zone policy change is
+# made and persisted.
+FIXED_ZONE_SOURCE_POLICY: dict[str, dict[SoilZone, str | None]] = {
+    "sl": {
+        "upper_root_zone": ICON_EU_MODEL_KEY,
+        "main_root_zone": ICON_EU_MODEL_KEY,
+        "deep_root_zone": ICON_2I_MODEL_KEY,
+    },
+    "h240": {
+        "upper_root_zone": ICON_D2_MODEL_KEY,
+        "main_root_zone": ICON_D2_MODEL_KEY,
+        "deep_root_zone": None,
+    },
+}
 
 
 def _require_utc(value: datetime, name: str) -> None:
@@ -30,7 +55,7 @@ def _require_utc(value: datetime, name: str) -> None:
 
 def _utc_iso(value: datetime) -> str:
     _require_utc(value, "datetime")
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 @dataclass(frozen=True)
@@ -93,7 +118,7 @@ class NativeSoilSeries:
             if not getattr(self, field_name).strip():
                 raise ValueError(f"{field_name} must not be blank")
 
-    def is_compatible_with(self, other: "NativeSoilSeries") -> bool:
+    def is_compatible_with(self, other: NativeSoilSeries) -> bool:
         """Return true only for interchangeable native quantity/depth semantics."""
         return (
             self.quantity == other.quantity
@@ -314,120 +339,197 @@ def _candidate_reason(
     return None
 
 
-def _evaluate_model_candidates(
-    observations: list[NativeSoilObservation],
-    model_key: str,
-    target: NativeSoilSeries,
-    valid_from_utc: datetime,
-    valid_to_utc: datetime,
-    as_of_utc: datetime,
-    policy: SoilSelectionPolicy,
-) -> tuple[NativeSoilObservation | None, str | None]:
-    candidates = [item for item in observations if item.series.model_key == model_key]
-    if not candidates:
-        return None, "missing"
-    compatible = [item for item in candidates if item.series.is_compatible_with(target)]
-    if not compatible:
-        return None, "incompatible_quantity_or_depth_semantics"
-    same_interval = [
-        item for item in compatible
-        if item.valid_from_utc == valid_from_utc and item.valid_to_utc == valid_to_utc
-    ]
-    if not same_interval:
-        return None, "different_validity_interval"
-    evaluated = [
-        (item, _candidate_reason(item, target, valid_from_utc, valid_to_utc, as_of_utc, policy))
-        for item in same_interval
-    ]
-    eligible = [item for item, reason in evaluated if reason is None]
-    if eligible:
-        return max(eligible, key=lambda item: (item.retrieved_at_utc, item.model_run_at_utc)), None
-    rejected, reason = max(
-        evaluated,
-        key=lambda pair: (pair[0].retrieved_at_utc, pair[0].model_run_at_utc),
-    )
-    return rejected, reason
+def fixed_source_model(site_slug: str, zone: SoilZone) -> str | None:
+    """Return the D-023 source for a site/zone, never a provider best-match."""
+    normalized_site = site_slug.strip().lower()
+    try:
+        return FIXED_ZONE_SOURCE_POLICY[normalized_site][zone]
+    except KeyError as exc:
+        raise ValueError(f"unsupported soil site/zone: {site_slug}/{zone}") from exc
 
 
-def select_best_available(
+@dataclass(frozen=True)
+class FixedSoilZoneSelection:
+    """One coherent zone snapshot containing both native quantities."""
+
+    site_slug: str
+    zone: SoilZone
+    valid_from_utc: datetime
+    valid_to_utc: datetime
+    availability: Availability
+    source_model_key: str | None
+    source_model_run_at_utc: datetime | None
+    source_retrieved_at_utc: datetime | None
+    observations: tuple[NativeSoilObservation, ...]
+    selection_reason: str
+    unavailable_reason: str | None = None
+    algorithm_version: str = BEST_AVAILABLE_ALGORITHM_VERSION
+
+    def __post_init__(self) -> None:
+        _require_utc(self.valid_from_utc, "valid_from_utc")
+        _require_utc(self.valid_to_utc, "valid_to_utc")
+        if self.valid_from_utc >= self.valid_to_utc:
+            raise ValueError("valid UTC interval must have a positive duration")
+        if not self.selection_reason.strip():
+            raise ValueError("selection_reason must not be blank")
+        if self.availability == "unavailable":
+            if self.observations or self.source_model_key is not None:
+                raise ValueError("unavailable zones cannot carry substitute observations")
+            if self.source_model_run_at_utc is not None or self.source_retrieved_at_utc is not None:
+                raise ValueError("unavailable zones cannot carry substitute run provenance")
+            if not self.unavailable_reason:
+                raise ValueError("unavailable zones require an explicit reason")
+            return
+        if self.availability != "available":
+            raise ValueError(f"unsupported availability: {self.availability}")
+        if self.unavailable_reason is not None:
+            raise ValueError("available zones cannot have an unavailable reason")
+        if self.source_model_key is None or self.source_model_run_at_utc is None:
+            raise ValueError("available zones require model and run provenance")
+        if self.source_retrieved_at_utc is None:
+            raise ValueError("available zones require retrieval provenance")
+        _require_utc(self.source_model_run_at_utc, "source_model_run_at_utc")
+        _require_utc(self.source_retrieved_at_utc, "source_retrieved_at_utc")
+        quantities = {item.series.quantity for item in self.observations}
+        if quantities != SOIL_QUANTITIES:
+            raise ValueError("available zones require coherent soil temperature and moisture")
+        for item in self.observations:
+            if (
+                item.availability != "available"
+                or item.series.model_key != self.source_model_key
+                or item.model_run_at_utc != self.source_model_run_at_utc
+                or item.valid_from_utc != self.valid_from_utc
+                or item.valid_to_utc != self.valid_to_utc
+            ):
+                raise ValueError("zone observations must share source, run, and validity interval")
+
+    def as_dict(self) -> dict[str, object]:
+        values = {
+            item.series.quantity: item.as_dict()
+            for item in sorted(self.observations, key=lambda point: point.series.quantity)
+        }
+        return {
+            "site": self.site_slug,
+            "zone": self.zone,
+            "availability": self.availability,
+            "valid_from_utc": _utc_iso(self.valid_from_utc),
+            "valid_to_utc": _utc_iso(self.valid_to_utc),
+            "source_model_key": self.source_model_key,
+            "source_model_run_at_utc": (
+                _utc_iso(self.source_model_run_at_utc)
+                if self.source_model_run_at_utc else None
+            ),
+            "source_retrieved_at_utc": (
+                _utc_iso(self.source_retrieved_at_utc)
+                if self.source_retrieved_at_utc else None
+            ),
+            "selection_reason": self.selection_reason,
+            "algorithm_version": self.algorithm_version,
+            "unavailable_reason": self.unavailable_reason,
+            "values": values,
+        }
+
+
+def select_fixed_zone_run(
     *,
-    target: NativeSoilSeries,
+    site_slug: str,
+    zone: SoilZone,
+    targets: Mapping[str, NativeSoilSeries],
     valid_from_utc: datetime,
     valid_to_utc: datetime,
     observations: list[NativeSoilObservation],
     as_of_utc: datetime,
     policy: SoilSelectionPolicy,
-) -> BestAvailableSoilPoint:
-    """Select ICON-2I, otherwise ICON-EU, without mixing native layers.
+) -> FixedSoilZoneSelection:
+    """Select the newest complete eligible run from the fixed zone source.
 
-    The function has no implicit freshness or coverage defaults.  A caller
-    must provide the policy used for the persisted result, making the current
-    provisional threshold auditable and replaceable after the S04 comparison.
+    ``targets`` supplies the already-approved native depth contract for both
+    quantities.  This function intentionally does not invent a depth-to-zone
+    mapping.  If either quantity is absent from a run, the entire zone is
+    unavailable rather than being completed from another model or run.
     """
-    _require_utc(valid_from_utc, "valid_from_utc")
-    _require_utc(valid_to_utc, "valid_to_utc")
-    _require_utc(as_of_utc, "as_of_utc")
+    for value, name in (
+        (valid_from_utc, "valid_from_utc"),
+        (valid_to_utc, "valid_to_utc"),
+        (as_of_utc, "as_of_utc"),
+    ):
+        _require_utc(value, name)
     if valid_from_utc >= valid_to_utc:
         raise ValueError("valid UTC interval must have a positive duration")
-
-    evaluations: dict[str, tuple[NativeSoilObservation | None, str | None]] = {}
-    for model_key in (ICON_2I_MODEL_KEY, ICON_EU_MODEL_KEY):
-        evaluations[model_key] = _evaluate_model_candidates(
-            observations,
-            model_key,
-            target,
-            valid_from_utc,
-            valid_to_utc,
-            as_of_utc,
-            policy,
-        )
-
-    primary, primary_reason = evaluations[ICON_2I_MODEL_KEY]
-    fallback, fallback_reason = evaluations[ICON_EU_MODEL_KEY]
-    selected: NativeSoilObservation | None = None
-    selected_fallback_reason: str | None = None
-    if primary is not None and primary_reason is None:
-        selected = primary
-    elif fallback is not None and fallback_reason is None:
-        selected = fallback
-        selected_fallback_reason = f"icon_2i:{primary_reason or 'not_selected'}"
-
-    if selected is None:
-        reasons = (
-            f"icon_2i:{primary_reason or 'not_selected'};"
-            f"icon_eu:{fallback_reason or 'not_selected'}"
-        )
-        return BestAvailableSoilPoint(
-            target=target,
+    normalized_site = site_slug.strip().lower()
+    configured_model = fixed_source_model(normalized_site, zone)
+    if configured_model is None:
+        return FixedSoilZoneSelection(
+            site_slug=normalized_site,
+            zone=zone,
             valid_from_utc=valid_from_utc,
             valid_to_utc=valid_to_utc,
-            value=None,
             availability="unavailable",
             source_model_key=None,
-            source_variable=None,
-            source_depth=None,
             source_model_run_at_utc=None,
             source_retrieved_at_utc=None,
-            source_coverage_ratio=None,
-            source_quality_flags=None,
-            mapping_method="no_mapping",
-            fallback_reason=None,
-            unavailable_reason=f"no_eligible_native_source:{reasons}",
+            observations=(),
+            selection_reason="fixed_site_zone_policy",
+            unavailable_reason="source_not_available_by_policy",
         )
 
-    return BestAvailableSoilPoint(
-        target=target,
+    if set(targets) != SOIL_QUANTITIES:
+        raise ValueError("targets must contain soil_temperature and soil_moisture")
+    for quantity, target in targets.items():
+        if target.quantity != quantity:
+            raise ValueError(f"target quantity mismatch: {quantity}")
+
+    eligible_by_run: dict[datetime, dict[str, NativeSoilObservation]] = {}
+    rejection_reasons: set[str] = set()
+    for item in observations:
+        if item.series.model_key != configured_model:
+            continue
+        target = targets.get(item.series.quantity)
+        if target is None:
+            continue
+        reason = _candidate_reason(
+            item, target, valid_from_utc, valid_to_utc, as_of_utc, policy
+        )
+        if reason is not None:
+            rejection_reasons.add(f"{item.series.quantity}:{reason}")
+            continue
+        by_quantity = eligible_by_run.setdefault(item.model_run_at_utc, {})
+        previous = by_quantity.get(item.series.quantity)
+        if previous is None or item.retrieved_at_utc > previous.retrieved_at_utc:
+            by_quantity[item.series.quantity] = item
+
+    complete_runs = [
+        (run_at, points)
+        for run_at, points in eligible_by_run.items()
+        if set(points) == SOIL_QUANTITIES
+    ]
+    if not complete_runs:
+        detail = ",".join(sorted(rejection_reasons)) or "missing"
+        return FixedSoilZoneSelection(
+            site_slug=normalized_site,
+            zone=zone,
+            valid_from_utc=valid_from_utc,
+            valid_to_utc=valid_to_utc,
+            availability="unavailable",
+            source_model_key=None,
+            source_model_run_at_utc=None,
+            source_retrieved_at_utc=None,
+            observations=(),
+            selection_reason="fixed_site_zone_policy",
+            unavailable_reason=f"no_complete_coherent_run:{configured_model}:{detail}",
+        )
+
+    run_at, points = max(complete_runs, key=lambda pair: pair[0])
+    selected = tuple(points[quantity] for quantity in sorted(SOIL_QUANTITIES))
+    return FixedSoilZoneSelection(
+        site_slug=normalized_site,
+        zone=zone,
         valid_from_utc=valid_from_utc,
         valid_to_utc=valid_to_utc,
-        value=selected.value,
         availability="available",
-        source_model_key=selected.series.model_key,
-        source_variable=selected.series.source_variable,
-        source_depth=selected.series.depth,
-        source_model_run_at_utc=selected.model_run_at_utc,
-        source_retrieved_at_utc=selected.retrieved_at_utc,
-        source_coverage_ratio=selected.coverage_ratio,
-        source_quality_flags=selected.quality_flags,
-        mapping_method="native_passthrough",
-        fallback_reason=selected_fallback_reason,
+        source_model_key=configured_model,
+        source_model_run_at_utc=run_at,
+        source_retrieved_at_utc=max(item.retrieved_at_utc for item in selected),
+        observations=selected,
+        selection_reason="fixed_site_zone_policy",
     )

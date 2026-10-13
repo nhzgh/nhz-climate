@@ -3,3 +3,4 @@ __pycache__/
 .DS_Store
 # Local high-resolution source used to derive the packaged 256 px HACS icon.
 custom_components/nhz_climate/brand/EDEDBE2B-D08B-46E7-96A1-43A7C45AE3B5.png
+custom_components/nhz_climate/brand/59A7E897-2C93-412D-A4C9-D64882D838AC.png
