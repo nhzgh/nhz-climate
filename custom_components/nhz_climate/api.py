@@ -73,6 +73,17 @@ class NhzClimateApi:
         """Return compact fixed-policy zone snapshots, never raw hourly arrays."""
         return await self._get(f"/v1/sites/{quote(site, safe='')}/soil")
 
+    async def forecast(
+        self,
+        site: str,
+        variables: tuple[str, ...] = ("temperature_2m", "precipitation"),
+    ) -> dict[str, Any]:
+        """Return the bounded regional forecast and six-hour rain events."""
+        return await self._get(
+            f"/v1/sites/{quote(site, safe='')}/forecast",
+            {"variables": ",".join(variables)},
+        )
+
     async def temperature_profile(
         self, site: str, dataset: str, baseline: str = "1991-2020"
     ) -> dict[str, Any]:

@@ -129,6 +129,71 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if item.get("datetime")
         ]
 
+    async def _async_regional_forecast(self) -> dict[str, Any]:
+        """Read S09/S10 regional values, keeping provider provenance intact."""
+        method = getattr(self.api, "forecast", None)
+        if method is None:
+            return {}
+        try:
+            result = await method(self.site, ("temperature_2m", "precipitation"))
+        except NhzClimateError:
+            return {"availability": "unavailable", "stale": False, "points": []}
+        return result if isinstance(result, dict) else {}
+
+    @staticmethod
+    def _merge_regional_forecast(
+        weather_forecast: list[dict[str, Any]], regional: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Overlay regional temperature/precipitation on the HA forecast.
+
+        HA's configured provider may still supply humidity and wind fields for
+        ventilation.  Temperature and precipitation, however, are replaced
+        only when the explicit Hetzner regional product contains that point.
+        The resulting point retains a source marker for the card and sensors.
+        """
+        regional_points = regional.get("points")
+        if not isinstance(regional_points, list):
+            return weather_forecast
+        if not regional_points and regional.get("availability") == "unavailable":
+            # Keep HA's humidity/wind forecast available for ventilation
+            # diagnostics, but never silently present it as the approved
+            # regional temperature or precipitation product.
+            return [
+                {
+                    key: value for key, value in item.items()
+                    if key not in {"temperature", "precipitation"}
+                }
+                for item in weather_forecast
+                if item.get("datetime")
+            ]
+        def time_key(value: Any) -> str | None:
+            parsed = NhzClimateCoordinator._parse_utc(value)
+            return parsed.isoformat() if parsed is not None else None
+
+        by_time: dict[str, dict[str, Any]] = {}
+        for point in regional_points:
+            if not isinstance(point, dict) or not point.get("valid_at"):
+                continue
+            timestamp = time_key(point["valid_at"])
+            if timestamp is None:
+                continue
+            variable = point.get("variable")
+            if variable not in {"temperature_2m", "precipitation"}:
+                continue
+            field = "temperature" if variable == "temperature_2m" else "precipitation"
+            by_time.setdefault(timestamp, {"datetime": timestamp})[field] = point.get("value")
+        merged: dict[str, dict[str, Any]] = {}
+        for item in weather_forecast:
+            timestamp = time_key(item.get("datetime"))
+            if timestamp is not None:
+                merged[timestamp] = {**item, "datetime": timestamp}
+        for timestamp, point in by_time.items():
+            merged.setdefault(timestamp, {}).update(point)
+            merged[timestamp]["forecast_source"] = "hetzner_regional"
+            merged[timestamp]["forecast_model"] = regional.get("deterministic_model")
+            merged[timestamp]["forecast_run"] = regional.get("model_run_id")
+        return [merged[key] for key in sorted(merged)]
+
     async def _async_temperature_profile(self, baseline: str) -> dict[str, Any]:
         try:
             return await self.api.temperature_profile(self.site, self.dataset, baseline)
@@ -815,6 +880,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 latest, profile, profile_all, profiles, profiles_all,
                 daily_profiles, daily_profiles_all, soil,
                 seven_day_profiles, seven_day_profiles_all, hourly, daily,
+                regional_forecast,
                 *comparison_responses,
             ) = await asyncio.gather(
                 self.api.latest(self.site, self.dataset, self.variables),
@@ -829,6 +895,7 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._async_daily_profiles(SECONDARY_BASELINE, window_days=7),
                 self._async_forecast("hourly"),
                 self._async_forecast("daily"),
+                self._async_regional_forecast(),
                 *(self._async_precipitation_comparison(variable, days)
                   for variable in (RAIN_VARIABLE, "snowfall", "precipitation")
                   for days in MONTHLY_COMPARISON_WINDOWS),
@@ -846,6 +913,8 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # for the calendar-day climate curve. Keep this refresh's raw
             # response separately: forward-looking ventilation projections
             # must never treat a stale retained future point as fresh.
+            hourly = self._merge_regional_forecast(hourly, regional_forecast)
+            latest["regional_forecast"] = regional_forecast
             latest["hourly_forecast_current_refresh"] = hourly
             latest["hourly_forecast"] = self._merge_hourly_forecast(hourly)
             latest["daily_forecast"] = daily

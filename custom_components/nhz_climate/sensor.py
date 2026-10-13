@@ -464,6 +464,7 @@ class NhzClimateComparisonSensor(NhzClimateComparisonBase):
         seven_day_all = _variable_profile(
             self.coordinator, "seven_day_profiles_all", "temperature_2m"
         )
+        regional = self.coordinator.data.get("regional_forecast", {})
         return {
             "baseline": self.profile.get("baseline"),
             "profile_date": self.profile.get("date"),
@@ -493,6 +494,11 @@ class NhzClimateComparisonSensor(NhzClimateComparisonBase):
             "seven_day_all": seven_day_all.get("daily", []),
             "seven_day_statistic": seven_day.get("statistic"),
             "forecast_entity": self.coordinator.data.get("forecast_entity"),
+            "forecast_availability": regional.get("availability"),
+            "forecast_stale": regional.get("stale"),
+            "forecast_model": regional.get("deterministic_model"),
+            "forecast_run": regional.get("model_run_id"),
+            "forecast_run_reference_time": regional.get("run_reference_time"),
             "algorithm_version": self.profile.get("algorithm_version"),
             "local_hourly_actual": self.coordinator.data.get(
                 "local_hourly_actual", {}
@@ -611,6 +617,7 @@ class NhzClimateVariableProfileSensor(
         seven_day = self._profile("seven_day_profiles") or {}
         seven_day_all = self._profile("seven_day_profiles_all") or {}
         forecast_field = FORECAST_FIELDS.get(self.variable)
+        regional = self.coordinator.data.get("regional_forecast", {})
         return {
             "baseline": self.coordinator.data.get("profiles", {}).get("baseline"),
             "all_data_baseline": self.coordinator.data.get("profiles_all", {}).get("baseline"),
@@ -633,9 +640,17 @@ class NhzClimateVariableProfileSensor(
                 self.coordinator.data.get("hourly_forecast", [])
                 if forecast_field else []
             ),
+            "forecast_availability": regional.get("availability"),
+            "forecast_stale": regional.get("stale"),
+            "forecast_model": regional.get("deterministic_model"),
+            "forecast_run": regional.get("model_run_id"),
+            "forecast_run_reference_time": regional.get("run_reference_time"),
+            "forecast_probability_6h": regional.get("precipitation_probability_6h", []),
             "local_hourly_actual": self.coordinator.data.get(
                 "local_hourly_actual", {}
-            ).get(self.variable),
+            ).get(
+                "rain" if self.variable == "precipitation" else self.variable
+            ),
         }
 
     @property
