@@ -619,6 +619,7 @@ class NhzClimateVariableProfileSensor(
         forecast_field = FORECAST_FIELDS.get(self.variable)
         regional = self.coordinator.data.get("regional_forecast", {})
         return {
+            "site_timezone": self.coordinator.data.get("profiles", {}).get("timezone"),
             "baseline": self.coordinator.data.get("profiles", {}).get("baseline"),
             "all_data_baseline": self.coordinator.data.get("profiles_all", {}).get("baseline"),
             "statistic": profile.get("statistic"),

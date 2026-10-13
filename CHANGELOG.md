@@ -2,6 +2,17 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.12.0 - 2026-10-13
+
+- Read the regional short-range forecast product from the NHZ Climate API and
+  expose hourly precipitation amount/probability plus temperature-series
+  provenance on the existing climate-profile entities.
+- Keep timestamps unambiguous in UTC while publishing the site timezone for
+  dashboard rendering, and preserve local rain history as the preferred
+  retrospective precipitation line.
+- Treat the forecast endpoint as optional so existing climate, soil and
+  ventilation entities remain available during forecast import/API failures.
+
 ## 0.10.5 - 2026-10-06
 
 - Restrict `optional` in `duration_target_v1` to climate-neutral, non-harmful

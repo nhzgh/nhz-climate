@@ -29,6 +29,16 @@ runs HACS validation, creates the GitHub release and verifies that it is
 published on the exact approved commit supplied to the workflow. Site rollout starts only after HACS
 reports that release as its latest version.
 
+## 0.12 feature scope
+
+- Optional regional short-range forecast arrays for temperature and
+  precipitation, including hourly amount, six-hour event probability and
+  explicit provider/model/run provenance.
+- UTC-normalized timestamps plus the site timezone required by the dashboard;
+  local rain observations remain the retrospective source where available.
+- Forecast failures do not make established climate, soil or ventilation
+  entities unavailable.
+
 ## 0.11 feature scope
 
 - Compact native soil-temperature and soil-moisture entities for the fixed
