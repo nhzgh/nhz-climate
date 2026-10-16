@@ -647,6 +647,21 @@ class NhzClimateVariableProfileSensor(
             "forecast_run": regional.get("model_run_id"),
             "forecast_run_reference_time": regional.get("run_reference_time"),
             "forecast_probability_6h": regional.get("precipitation_probability_6h", []),
+            # Optional additive S10 comparison contract.  Older API payloads
+            # simply omit these fields; keeping the empty defaults makes the
+            # entity/card backwards compatible while allowing IFS overlays
+            # and compact planning windows when the API starts returning them.
+            "forecast_comparisons": regional.get(
+                "comparison_forecasts",
+                regional.get(
+                    "forecast_comparisons",
+                    regional.get("forecast_comparison", regional.get("comparison", [])),
+                ),
+            ),
+            "forecast_planning": regional.get(
+                "planning_forecast",
+                regional.get("forecast_planning", regional.get("planning", {})),
+            ),
             "local_hourly_actual": self.coordinator.data.get(
                 "local_hourly_actual", {}
             ).get(

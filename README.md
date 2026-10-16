@@ -29,11 +29,22 @@ runs HACS validation, creates the GitHub release and verifies that it is
 published on the exact approved commit supplied to the workflow. Site rollout starts only after HACS
 reports that release as its latest version.
 
+## 0.13 feature scope
+
+- Optional compact six-hour IFS P10/P50/P90 comparisons and probability for
+  at least 0.5 mm, without relabelling them as hourly ICON values.
+- Optional absolute 24/48-hour planning windows including dry probability.
+
 ## 0.12 feature scope
 
 - Optional regional short-range forecast arrays for temperature and
   precipitation, including hourly amount, six-hour event probability and
   explicit provider/model/run provenance.
+- Optional additive comparison arrays (`forecast_comparisons`) keep an IFS
+  0–72-hour overlay separate from the regional ICON forecast. Optional
+  `forecast_planning` windows expose absolute P10/P50/P90 precipitation and
+  dry-window probabilities for 24/48-hour planning; absent fields are ignored
+  by older cards and integrations.
 - UTC-normalized timestamps plus the site timezone required by the dashboard;
   local rain observations remain the retrospective source where available.
 - Forecast failures do not make established climate, soil or ventilation

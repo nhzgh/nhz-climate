@@ -2,6 +2,13 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.13.0 - 2026-10-16
+
+- Expose compact IFS six-hour precipitation comparisons and absolute
+  24/48-hour planning windows from the backend forecast contract.
+- Keep the optional additions backwards compatible and separate from the
+  established ICON hourly values and local actual history.
+
 ## 0.12.0 - 2026-10-13
 
 - Read the regional short-range forecast product from the NHZ Climate API and
