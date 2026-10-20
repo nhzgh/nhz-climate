@@ -29,6 +29,23 @@ runs HACS validation, creates the GitHub release and verifies that it is
 published on the exact approved commit supplied to the workflow. Site rollout starts only after HACS
 reports that release as its latest version.
 
+## 0.14 feature scope
+
+- New site-specific `sensor.nhz_climate_<site>_dry_window_planning` publishes
+  a bounded, token-free planning contract for a dashboard card. It retains the
+  complete current IFS (day 3–15) and EC46 (day 10–46) 24/48-hour horizons at
+  six-hour starts in a lossless, columnar v2 contract. Each model exposes
+  `series["24h"|"48h"]` with one `base` UTC timestamp, `offset_hours`, and
+  position-aligned `dry_probability` plus optional `coverage_ratio`, `p10_mm`,
+  `p50_mm` and `p90_mm` arrays (`null` remains an explicit unavailable value).
+  An entirely full coverage or entirely absent optional column is omitted.
+  This avoids repeating timestamps and keys while retaining model and explicit forecast
+  (not LTS) semantics.
+- The percentage state is `best_available` for **24-hour** windows: the highest
+  dry probability wins; ties use the earliest window and then IFS before EC46.
+  Cards select 24/48-hour rows independently. Missing usable 24-hour planning
+  data is unambiguously unavailable and is never represented as a dry interval.
+
 ## 0.13 feature scope
 
 - Optional compact six-hour IFS P10/P50/P90 comparisons and probability for

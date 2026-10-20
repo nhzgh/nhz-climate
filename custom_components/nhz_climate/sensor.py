@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
+from math import isfinite
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -76,6 +77,271 @@ SOURCE_SUFFIXES = {
     "et0_fao_evapotranspiration": "evapotranspiration",
     "vapour_pressure_deficit": "vapour_pressure_deficit",
 }
+
+
+# The API currently returns IFS day 3--15 and EC46 day 10--46 planning
+# products. The limits retain that complete current horizon but prevent an API
+# expansion from turning one Home Assistant state attribute into an unbounded
+# Recorder payload.
+MAX_DRY_WINDOW_MODELS = 2
+DRY_WINDOW_MODEL_PRIORITY = ("ifs_eps", "ec46_eps")
+# Four six-hour starts per day, each with one 24-hour and one 48-hour window,
+# plus a small boundary allowance. These bounds retain the complete current
+# planning horizons without allowing a future API response to grow forever.
+MAX_DRY_WINDOWS_BY_MODEL = {"ifs_eps": 112, "ec46_eps": 304}
+
+
+def _finite_probability(value: Any) -> float | None:
+    """Return a JSON probability only when it is a usable closed interval."""
+    if isinstance(value, bool):
+        return None
+    try:
+        probability = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(probability) or not 0 <= probability <= 1:
+        return None
+    return probability
+
+
+def _compact_forecast_number(value: Any) -> float | None:
+    """Keep planning attributes bounded and reject non-finite API values."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(number, 3) if isfinite(number) else None
+
+
+def _compact_dry_window(window: Any) -> dict[str, Any] | None:
+    """Reduce one API planning window to the dashboard-safe public contract."""
+    if not isinstance(window, dict):
+        return None
+    hours = window.get("window_hours")
+    if hours not in (24, 48):
+        return None
+    probability = _finite_probability(window.get("dry_probability"))
+    valid_from = window.get("valid_from")
+    valid_to = window.get("valid_to")
+    if probability is None or not valid_from or not valid_to:
+        return None
+    try:
+        start = datetime.fromisoformat(str(valid_from).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(valid_to).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if (
+        start.tzinfo is None
+        or end.tzinfo is None
+        or end - start != timedelta(hours=hours)
+    ):
+        return None
+    # Short internal keys make validation/selection cheap before the public
+    # columnar encoder removes repeated timestamps and keys: h hours, s/e UTC
+    # bounds, d probability, c coverage, l/m/q P10/P50/P90 in mm.
+    compact = {"h": hours, "s": str(valid_from), "e": str(valid_to), "d": probability}
+    coverage = _finite_probability(window.get("coverage_ratio"))
+    if coverage is not None:
+        compact["c"] = coverage
+    for output_key, key in (("l", "p10_mm"), ("m", "p50_mm"), ("q", "p90_mm")):
+        value = _compact_forecast_number(window.get(key))
+        if value is not None:
+            compact[output_key] = value
+    return compact
+
+
+def _columnar_dry_window_series(windows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Encode fixed-duration forecast rows without repeated ISO timestamps.
+
+    Every API window is UTC and starts on an exact hourly boundary.  A series
+    stores its first timestamp once; all following starts are integer-hour
+    offsets.  The arrays use identical positions, including explicit ``None``
+    for an unavailable optional coverage or quantile.  This is lossless for
+    the planning contract while remaining below Home Assistant's attribute
+    size limit for the current complete IFS and EC46 horizons.
+    """
+    result: dict[str, dict[str, Any]] = {}
+    for hours in (24, 48):
+        rows = [window for window in windows if window["h"] == hours]
+        if not rows:
+            continue
+        base = rows[0]["s"]
+        try:
+            base_time = datetime.fromisoformat(base.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if base_time.tzinfo is None:
+            continue
+        offsets: list[int] = []
+        for row in rows:
+            try:
+                start_time = datetime.fromisoformat(row["s"].replace("Z", "+00:00"))
+            except ValueError:
+                offsets = []
+                break
+            if start_time.tzinfo is None:
+                continue
+            offset_seconds = (start_time - base_time).total_seconds()
+            if offset_seconds % 3600:
+                continue
+            offsets.append(int(offset_seconds // 3600))
+        if len(offsets) != len(rows):
+            # Invalid timestamps are not eligible planning values. Never
+            # replace them with a guessed calendar position.
+            continue
+        columns: dict[str, Any] = {
+            "base": base,
+            "offset_hours": offsets,
+            "dry_probability": [row["d"] for row in rows],
+        }
+        coverage = [row.get("c") for row in rows]
+        # Full coverage is the overwhelmingly common case and is harmless to
+        # omit. A present array remains positional so partial/missing rows are
+        # represented exactly rather than silently treated as complete.
+        if any(value is None or value < 1 for value in coverage):
+            columns["coverage_ratio"] = coverage
+        for output_key, input_key in (
+            ("p10_mm", "l"), ("p50_mm", "m"), ("p90_mm", "q")
+        ):
+            values = [row.get(input_key) for row in rows]
+            if any(value is not None for value in values):
+                columns[output_key] = values
+        result[f"{hours}h"] = columns
+    return result
+
+
+def _columnar_dry_window_models(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose only model provenance plus compact positional planning series."""
+    result: list[dict[str, Any]] = []
+    for model in models:
+        series = _columnar_dry_window_series(model["windows"])
+        if not series:
+            continue
+        compact = {
+            "model_key": model["model_key"],
+            "provider_model": model["provider_model"],
+            "series": series,
+        }
+        if snapshot_at := model.get("snapshot_at"):
+            compact["snapshot_at"] = snapshot_at
+        result.append(compact)
+    return result
+
+
+def compact_dry_window_planning(payload: Any) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Publish a small planning contract and its deterministic best candidate.
+
+    Planning values are forecast ensemble summaries, not observed values or
+    LTS statistics.  The entity never synthesizes dry weather from a missing
+    amount/probability.  Selection therefore needs a genuine probability and
+    complete time bounds.  The sensor state specifically selects the
+    highest-probability 24-hour window; probability ties use the earliest
+    window, then documented model priority. Cards receive both 24/48-hour
+    series and make their own duration-specific selection.
+    """
+    if not isinstance(payload, list):
+        return [], None
+
+    models: list[dict[str, Any]] = []
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        model_key = item.get("model_key")
+        provider_model = item.get("provider_model")
+        if not isinstance(model_key, str) or not model_key.strip():
+            continue
+        if not isinstance(provider_model, str) or not provider_model.strip():
+            continue
+        raw_windows = item.get("windows")
+        # The current API exposes the full horizon in ``windows``.  Only old
+        # API responses lack that field, in which case its two shortcuts are
+        # still useful as a bounded compatibility fallback.
+        if isinstance(raw_windows, list):
+            raw_window_items = raw_windows
+        else:
+            raw_window_items = [item.get("next_24h"), item.get("next_48h")]
+        windows = [
+            compact
+            for compact in (_compact_dry_window(window) for window in raw_window_items)
+            if compact is not None
+        ]
+        if not windows:
+            continue
+        windows = list({
+            (window["h"], window["s"], window["e"]): window
+            for window in windows
+        }.values())
+        windows.sort(key=lambda window: (window["s"], window["h"]))
+        compact_model_key = model_key.strip()[:80]
+        limit = MAX_DRY_WINDOWS_BY_MODEL.get(compact_model_key)
+        if limit is None:
+            continue
+        windows = windows[:limit]
+        compact_model: dict[str, Any] = {
+            "model_key": compact_model_key,
+            "provider_model": provider_model.strip()[:120],
+            "windows": windows,
+        }
+        snapshot_at = item.get("snapshot_at")
+        if snapshot_at:
+            compact_model["snapshot_at"] = str(snapshot_at)
+        models.append(compact_model)
+        candidates.extend(
+            (compact_model["model_key"], window)
+            for window in windows
+            if window["h"] == 24
+        )
+
+    priority = {model: index for index, model in enumerate(DRY_WINDOW_MODEL_PRIORITY)}
+    models.sort(
+        key=lambda model: (
+            priority.get(model["model_key"], len(priority)),
+            min(window["s"] for window in model["windows"]),
+            model["model_key"],
+        )
+    )
+    selected = min(
+        candidates,
+        key=lambda item: (
+            -item[1]["d"],
+            item[1]["s"],
+            priority.get(item[0], len(priority)),
+            item[0],
+        ),
+        default=None,
+    )
+    bounded = models[:MAX_DRY_WINDOW_MODELS]
+    public_models = _columnar_dry_window_models(bounded)
+    if selected is None:
+        # A card can still render valid 48-hour planning rows even though the
+        # entity state is explicitly unavailable without a 24-hour candidate.
+        return public_models, None
+
+    # Keep the selected model even if an API change makes it fall outside the
+    # ordinary display cap; otherwise "best_available" would be opaque.
+    selected_key, selected_window = selected
+    selected_model = next(model for model in models if model["model_key"] == selected_key)
+    if selected_key not in {model["model_key"] for model in bounded}:
+        bounded = [selected_model, *bounded[: MAX_DRY_WINDOW_MODELS - 1]]
+        public_models = _columnar_dry_window_models(bounded)
+    selected_contract = {
+        "model_key": selected_key,
+        "provider_model": selected_model["provider_model"],
+        "window_hours": selected_window["h"],
+        "valid_from": selected_window["s"],
+        "valid_to": selected_window["e"],
+        "dry_probability": selected_window["d"],
+    }
+    for output_key, key in (("coverage_ratio", "c"), ("p10_mm", "l"),
+                            ("p50_mm", "m"), ("p90_mm", "q")):
+        if (value := selected_window.get(key)) is not None:
+            selected_contract[output_key] = value
+    if snapshot_at := selected_model.get("snapshot_at"):
+        selected_contract["snapshot_at"] = snapshot_at
+    return public_models, selected_contract
 
 
 def _compact_number(value: Any) -> Any:
@@ -261,6 +527,7 @@ async def async_setup_entry(
             NhzClimateNormalHighSensor(coordinator),
             NhzClimateNormalLowSensor(coordinator),
             NhzClimateForecastHighSensor(coordinator),
+            NhzClimateDryWindowPlanningSensor(coordinator),
         ]
     )
     entities.extend(
@@ -667,6 +934,103 @@ class NhzClimateVariableProfileSensor(
             ).get(
                 "rain" if self.variable == "precipitation" else self.variable
             ),
+        }
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self.coordinator.site}_{self.coordinator.dataset}")},
+            name=f"NHZ Climate {self.coordinator.site}",
+            manufacturer="NHZ",
+            model=f"Open-Meteo {self.coordinator.dataset}",
+            configuration_url="https://oc.nhz.de/docs",
+        )
+
+
+class NhzClimateDryWindowPlanningSensor(
+    CoordinatorEntity[NhzClimateCoordinator], SensorEntity
+):
+    """Token-free, bounded ensemble planning windows for a dashboard card.
+
+    This is intentionally not a precipitation sensor: a forecast probability
+    is neither a measured precipitation amount nor an LTS statistic.  Its
+    percentage state is only a convenient summary of the selected planning
+    window; the time bounds and model provenance stay explicit in attributes.
+    """
+
+    _attr_has_entity_name = True
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_suggested_display_precision = 0
+    _attr_attribution = "Precipitation planning forecast by NHZ / Open-Meteo"
+
+    def __init__(self, coordinator: NhzClimateCoordinator) -> None:
+        super().__init__(coordinator)
+        # Forecast planning does not vary by climate baseline/dataset.  Keep
+        # both identifier and preferred object id stable for one physical site.
+        self._attr_unique_id = f"{coordinator.site}_dry_window_planning"
+        self._attr_suggested_object_id = (
+            f"nhz_climate_{coordinator.site}_dry_window_planning"
+        )
+        self._attr_name = f"{coordinator.site.upper()} Trockenfenster Planung"
+
+    @property
+    def _regional_forecast(self) -> dict[str, Any]:
+        forecast = self.coordinator.data.get("regional_forecast", {})
+        return forecast if isinstance(forecast, dict) else {}
+
+    @property
+    def _contract(self) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        # ``planning_forecast`` is the current API field.  The fallbacks make
+        # a rolling API upgrade non-breaking without exposing arbitrary raw
+        # coordinator content to Recorder or a card.
+        forecast = self._regional_forecast
+        payload = forecast.get(
+            "planning_forecast",
+            forecast.get("forecast_planning", forecast.get("planning", [])),
+        )
+        return compact_dry_window_planning(payload)
+
+    @property
+    def available(self) -> bool:
+        _, selected = self._contract
+        return super().available and selected is not None
+
+    @property
+    def native_value(self) -> float | None:
+        _, selected = self._contract
+        probability = selected.get("dry_probability") if selected else None
+        return round(probability * 100, 1) if probability is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        windows, selected = self._contract
+        forecast = self._regional_forecast
+        if selected is None:
+            reason = (
+                "forecast_unavailable"
+                if forecast.get("availability") == "unavailable"
+                else "planning_24h_windows_unavailable"
+            )
+        else:
+            reason = None
+        return {
+            "contract_version": "dry_window_planning_v2",
+            "semantics": (
+                "ensemble forecast dry probability for an absolute planning "
+                "window; not an observation or LTS statistic"
+            ),
+            "availability": "available" if selected is not None else "unavailable",
+            "unavailable_reason": reason,
+            "selection": "best_available",
+            "selection_policy": (
+                "highest dry probability among complete 24-hour windows; "
+                "ties use earliest window, then ifs_eps before ec46_eps"
+            ),
+            "selected_window": selected,
+            "planning_models": windows,
+            "site_timezone": forecast.get("timezone"),
+            "upstream_availability": forecast.get("availability"),
+            "upstream_stale": forecast.get("stale"),
         }
 
     @property

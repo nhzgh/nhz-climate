@@ -2,6 +2,21 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.14.0 - 2026-10-20
+
+- Add a stable, site-specific dry-window planning entity for cards:
+  `sensor.nhz_climate_<site>_dry_window_planning`.
+- Publish the complete current IFS and EC46 24/48-hour horizons at six-hour
+  starts as bounded, token-free columnar v2 series: one base UTC time plus
+  positional offset/probability/coverage/quantile arrays per duration. This
+  remains lossless while avoiding repeated timestamps and keys in Home
+  Assistant attributes. The percentage state selects the highest-probability
+  24-hour window (`best_available`); ties use earliest validity and then IFS
+  before EC46. Cards choose duration-specific rows.
+- Mark absent or invalid planning values as unavailable instead of inventing a
+  dry value. The entity explicitly declares that it is a forecast planning
+  product, not an observation or long-term-statistics series.
+
 ## 0.13.0 - 2026-10-16
 
 - Expose compact IFS six-hour precipitation comparisons and absolute
