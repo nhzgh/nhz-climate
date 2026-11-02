@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any
@@ -13,7 +14,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import NhzClimateApi, NhzClimateDataUnavailableError, NhzClimateError
+from .api import (
+    NhzClimateApi,
+    NhzClimateDataUnavailableError,
+    NhzClimateError,
+    NhzClimateProductConflictError,
+)
 from .const import (
     CONF_DATASET,
     CONF_FORECAST_ENTITY,
@@ -84,6 +90,14 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.variables = tuple(entry.data.get(CONF_VARIABLES, DEFAULT_VARIABLES))
         self.forecast_entity = entry.data.get(CONF_FORECAST_ENTITY, DEFAULT_FORECAST_ENTITY)
         self.ventilation_contexts: dict[str, Any] = {}
+        # Comparisons are optional display products.  Retain their last
+        # successfully assembled payload per variable/window only; retaining
+        # the coordinator as a whole would hide a failed core ``latest`` call.
+        self._comparison_last_good: dict[tuple[str, int], dict[str, Any]] = {}
+        self._comparison_result_status: dict[tuple[str, int], str] = {}
+        self._endpoint_health: dict[str, dict[str, dict[str, dict[str, Any]]]] = {
+            "precipitation_comparison": {}
+        }
 
     def _local_source_entity(self, variable: str) -> str:
         """Return an explicitly configured local source, never a site default."""
@@ -231,8 +245,10 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_precipitation_comparison(
         self, variable: str, days: int
     ) -> dict[str, Any]:
+        key = (variable, days)
+        attempted_at = datetime.now(timezone.utc).isoformat()
         try:
-            return await self.api.precipitation_comparison(
+            result = await self.api.precipitation_comparison(
                 self.site,
                 self.dataset,
                 variable=variable,
@@ -246,8 +262,59 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 ),
             )
-        except NhzClimateDataUnavailableError:
-            return {}
+        except (NhzClimateDataUnavailableError, NhzClimateProductConflictError) as exc:
+            previous = self._comparison_last_good.get(key)
+            if previous is None and self.data:
+                previous = (
+                    self.data.get("monthly_comparisons", {})
+                    .get(variable, {})
+                    .get(f"{days}d")
+                )
+            status = "stale" if isinstance(previous, dict) and previous else "unavailable"
+            reason_code = (
+                "product_conflict"
+                if isinstance(exc, NhzClimateProductConflictError)
+                else "not_generated"
+            )
+            health: dict[str, Any] = {
+                "status": status,
+                "last_attempt_utc": attempted_at,
+                "reason_code": reason_code,
+            }
+            if isinstance(exc, NhzClimateProductConflictError):
+                health["http_status"] = exc.status
+                health["error_detail"] = exc.detail
+            if previous is not None:
+                prior_health = self._endpoint_health["precipitation_comparison"].get(
+                    variable, {}
+                ).get(f"{days}d", {})
+                if prior_health.get("last_success_utc"):
+                    health["last_success_utc"] = prior_health["last_success_utc"]
+            self._endpoint_health["precipitation_comparison"].setdefault(variable, {})[
+                f"{days}d"
+            ] = health
+            self._comparison_result_status[key] = status
+            return deepcopy(previous) if isinstance(previous, dict) else {}
+        self._endpoint_health["precipitation_comparison"].setdefault(variable, {})[
+            f"{days}d"
+        ] = {
+            "status": "available",
+            "last_attempt_utc": attempted_at,
+            "last_success_utc": attempted_at,
+        }
+        self._comparison_result_status[key] = "available"
+        return result if isinstance(result, dict) else {}
+
+    def _comparison_is_stale(self, variable: str, days: int) -> bool:
+        return self._comparison_result_status.get((variable, days)) == "stale"
+
+    def _remember_comparison(
+        self, variable: str, days: int, comparison: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Keep only a complete, successfully refreshed comparison as LKG."""
+        if comparison and not self._comparison_is_stale(variable, days):
+            self._comparison_last_good[(variable, days)] = deepcopy(comparison)
+        return comparison
 
     async def _async_local_statistics(
         self,
@@ -924,22 +991,42 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                                (index + 1) * len(MONTHLY_COMPARISON_WINDOWS)]
                 for index, variable in enumerate((RAIN_VARIABLE, "snowfall", "precipitation"))
             }
-            rain_comparisons = await asyncio.gather(
-                *(self._with_local_rain_actual(item)
-                  for item in by_variable[RAIN_VARIABLE])
-            )
-            precipitation_comparisons = await asyncio.gather(
-                *(
-                    self._with_local_rain_actual(
-                        comparison,
-                        modelled_liquid_comparison=liquid_comparison,
+            rain_comparisons = []
+            for days, comparison in zip(
+                MONTHLY_COMPARISON_WINDOWS, by_variable[RAIN_VARIABLE], strict=True
+            ):
+                # A retained payload has already had its local replacement
+                # applied. Reprocessing it with today's recorder values would
+                # silently turn last-known-good into a mixed-time result.
+                if self._comparison_is_stale(RAIN_VARIABLE, days):
+                    rain_comparisons.append(comparison)
+                else:
+                    rain_comparisons.append(await self._with_local_rain_actual(comparison))
+            precipitation_comparisons = []
+            for days, comparison, liquid_comparison in zip(
+                MONTHLY_COMPARISON_WINDOWS,
+                by_variable["precipitation"],
+                by_variable[RAIN_VARIABLE],
+                strict=True,
+            ):
+                if self._comparison_is_stale("precipitation", days):
+                    precipitation_comparisons.append(comparison)
+                else:
+                    precipitation_comparisons.append(
+                        await self._with_local_rain_actual(
+                            comparison,
+                            modelled_liquid_comparison=liquid_comparison,
+                        )
                     )
-                    for comparison, liquid_comparison in zip(
-                        by_variable["precipitation"], by_variable[RAIN_VARIABLE]
-                    )
-                )
-            )
-            latest["monthly_comparisons"] = {
+            snowfall_comparisons = []
+            for days, comparison in zip(
+                MONTHLY_COMPARISON_WINDOWS, by_variable["snowfall"], strict=True
+            ):
+                if self._comparison_is_stale("snowfall", days):
+                    snowfall_comparisons.append(comparison)
+                else:
+                    snowfall_comparisons.append(self._with_modelled_daily(comparison))
+            monthly_comparisons = {
                 RAIN_VARIABLE: {
                     f"{days}d": self._attach_daily_reference(
                         comparison, daily_profiles, RAIN_VARIABLE, profiles
@@ -959,15 +1046,22 @@ class NhzClimateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 },
                 "snowfall": {
                     f"{days}d": self._attach_daily_reference(
-                        self._with_modelled_daily(comparison), daily_profiles,
+                        comparison, daily_profiles,
                         "snowfall", profiles,
                     )
                     for days, comparison in zip(
-                        MONTHLY_COMPARISON_WINDOWS, by_variable["snowfall"]
+                        MONTHLY_COMPARISON_WINDOWS, snowfall_comparisons
                     )
                     if comparison
                 },
             }
+            for variable, comparisons in monthly_comparisons.items():
+                for range_key, comparison in comparisons.items():
+                    self._remember_comparison(
+                        variable, int(range_key.removesuffix("d")), comparison
+                    )
+            latest["monthly_comparisons"] = monthly_comparisons
+            latest["endpoint_health"] = deepcopy(self._endpoint_health)
             site_timezone = (
                 profile.get("timezone")
                 or profiles.get("timezone")

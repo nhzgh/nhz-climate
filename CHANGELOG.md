@@ -2,6 +2,18 @@
 
 All notable changes to the NHZ Climate integration are documented here.
 
+## 0.14.1 - 2026-11-02
+
+- Isolate unavailable or internally inconsistent precipitation-comparison
+  products by variable and time range. A conflict in one optional snowfall
+  comparison no longer blocks setup or makes unrelated climate entities
+  unavailable.
+- Preserve the exact last successful comparison payload while an individual
+  product is temporarily stale, and expose per-product availability,
+  timestamps and the sanitized conflict reason in diagnostics.
+- Keep authentication and transport failures fatal so infrastructure outages
+  remain visible instead of being mistaken for missing climate data.
+
 ## 0.14.0 - 2026-10-20
 
 - Add a stable, site-specific dry-window planning entity for cards:

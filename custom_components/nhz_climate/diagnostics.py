@@ -19,6 +19,7 @@ TO_REDACT = {
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: NhzClimateConfigEntry
 ) -> dict[str, Any]:
+    coordinator_data = entry.runtime_data.data
     return {
         "config_entry": async_redact_data(dict(entry.data), TO_REDACT),
         "config_subentries": {
@@ -29,7 +30,12 @@ async def async_get_config_entry_diagnostics(
             }
             for subentry in entry.subentries.values()
         },
-        "coordinator": async_redact_data(entry.runtime_data.data, TO_REDACT),
+        "coordinator": async_redact_data(coordinator_data, TO_REDACT),
+        # Keep per-endpoint freshness/conflict state easy to locate in a
+        # support export without requiring raw comparison payload inspection.
+        "endpoint_health": async_redact_data(
+            coordinator_data.get("endpoint_health", {}), TO_REDACT
+        ),
         "ventilation_pilot": {
             subentry_id: context.diagnostics()
             for subentry_id, context in entry.runtime_data.ventilation_contexts.items()

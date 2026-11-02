@@ -22,6 +22,16 @@ class NhzClimateDataUnavailableError(NhzClimateError):
     """Requested curated product has not been generated yet."""
 
 
+class NhzClimateProductConflictError(NhzClimateError):
+    """The server rejected an otherwise valid curated product as inconsistent."""
+
+    def __init__(self, endpoint: str, status: int, detail: str) -> None:
+        self.endpoint = endpoint
+        self.status = status
+        self.detail = detail
+        super().__init__(f"{endpoint}: HTTP {status}: {detail}")
+
+
 class NhzClimateApi:
     def __init__(self, session: ClientSession, base_url: str, token: str) -> None:
         self._session = session
@@ -44,9 +54,26 @@ class NhzClimateApi:
                     raise NhzClimateAuthError("Invalid API token")
                 if response.status == 404:
                     raise NhzClimateDataUnavailableError("Climate product unavailable")
+                if response.status == 409:
+                    detail = "Climate product data conflict"
+                    try:
+                        error_payload = await response.json(content_type=None)
+                    except (ClientError, ValueError):
+                        error_payload = None
+                    if isinstance(error_payload, dict):
+                        candidate = error_payload.get("detail")
+                        if isinstance(candidate, str) and candidate.strip():
+                            # The API controls this field, but constrain it so
+                            # diagnostics never become an unbounded server-body dump.
+                            detail = " ".join(candidate.split())[:240]
+                    raise NhzClimateProductConflictError(path, response.status, detail)
                 response.raise_for_status()
                 payload = await response.json(content_type=None)
-        except (NhzClimateAuthError, NhzClimateDataUnavailableError):
+        except (
+            NhzClimateAuthError,
+            NhzClimateDataUnavailableError,
+            NhzClimateProductConflictError,
+        ):
             raise
         except (ClientError, TimeoutError, ValueError) as exc:
             raise NhzClimateConnectionError(str(exc)) from exc
